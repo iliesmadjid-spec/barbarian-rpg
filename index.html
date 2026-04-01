@@ -268,14 +268,19 @@ const SYSTEM_PROMPT=`Tu es le Maître du Jeu d'un RPG BRUTAL basé sur "Survivin
 Bjorn est un barbare de Nv.1 réincarné dans "Dungeon & Stone" — mains nues, sans équipement, sans or, sans compétences.
 
 RÈGLES FONDAMENTALES :
-- D100 : <50=échec, >50=succès, 80+=critique, ≤20=désastre
-- Le jeu est TRÈS DIFFICILE. Économie brutale : objets rares, chers, ou nécessitant des sacrifices.
+- Le jeu est TRÈS DIFFICILE. Économie brutale : objets rares, chers, nécessitant des sacrifices.
 - Bjorn n'a RIEN au départ. Tout doit être trouvé/volé/fabriqué/acheté avec difficulté.
-- Eau rare dans le donjon. Nourriture encore plus rare. Jamais gratuit.
-- Température : les niveaux profonds sont glaciaux, certaines zones brûlantes.
-- Un marchand peut apparaître rarement, mais prix exorbitants.
+- Eau rare. Nourriture encore plus rare. Jamais gratuit.
+- Température : niveaux profonds glaciaux, certaines zones brûlantes.
 - Les PNJs sont méfiants. Pas de filet de sécurité.
 - Ton : brutal, viscéral, sans pitié. Max 4 phrases.
+
+RÈGLES DE COMBAT IMPORTANTES :
+- Le client calcule les dés et les dégâts. Le contexte te donnera [ROLL:X] avec le résultat.
+- Tu dois NARRATIVEMENT décrire ce qui se passe selon ce roll (critique=exploit, désastre=catastrophe).
+- En combat : fournis TOUJOURS enemyName (le nom exact de l'ennemi actuel) et enemyHp (PV restants après les dégâts calculés indiqués dans le contexte).
+- hpChange doit refléter les dégâts subis par Bjorn (négatif), jamais 0 en combat sauf si esquive totale.
+- xpGain : 10-30 XP par ennemi vaincu (enemyHp=0).
 
 RÈGLES DE SURVIE — hungerChange et thirstChange DOIVENT refléter la logique de l'action :
 - Se reposer / dormir          → faim: 0   soif: 0   temps: +6h  (métabolisme au repos)
@@ -316,6 +321,35 @@ FORMAT JSON OBLIGATOIRE dans un bloc \`\`\`json\`\`\` AVANT le texte :
 // HELPERS
 // ═══════════════════════════════════════════════════════════════════════════════
 function clamp(v,mn,mx){return Math.max(mn,Math.min(mx,v));}
+
+// ── SYSTÈME DE DÉS ET DÉGÂTS CLIENT-SIDE ─────────────────────────
+function rollD100(){ return Math.floor(Math.random()*100)+1; }
+
+function calcCombatDamage(roll, forStat, currentEnemyHp){
+  // Dégâts de Bjorn sur l'ennemi
+  let enemyDmg=0, playerDmg=0;
+  const base = Math.max(1, Math.floor(forStat*0.6));
+  if(roll>=80){
+    // CRITIQUE : frappe puissante, quasi pas de riposte
+    enemyDmg = base + Math.floor(Math.random()*8) + 8;
+    playerDmg = Math.floor(Math.random()*4);
+  } else if(roll>=51){
+    // SUCCÈS : échange standard
+    enemyDmg = base + Math.floor(Math.random()*5);
+    playerDmg = Math.floor(3 + Math.random()*9);
+  } else if(roll>=21){
+    // ÉCHEC : Bjorn rate, l'ennemi contre-attaque
+    enemyDmg = 0;
+    playerDmg = Math.floor(7 + Math.random()*11);
+  } else {
+    // DÉSASTRE : coup dévastateur reçu
+    enemyDmg = 0;
+    playerDmg = Math.floor(14 + Math.random()*14);
+  }
+  // L'ennemi ne peut pas descendre sous 0
+  const newEnemyHp = Math.max(0, currentEnemyHp - enemyDmg);
+  return { enemyDmg, playerDmg: -playerDmg, newEnemyHp };
+}
 
 function getSurvivalMalus(char){
   let forMod=0,agiMod=0,endMod=0,hpDrain=0,staDrain=0;
@@ -513,11 +547,11 @@ function App(){
   const applyDelta=useCallback((d,c0)=>{
     const c={...c0,stats:{...c0.stats},inventory:[...c0.inventory],skills:[...c0.skills]};
 
-    // Stats vitales
-    if(d.hpChange)      c.hp      =clamp(c.hp+d.hpChange,0,c.hpMax);
-    if(d.staminaChange) c.stamina =clamp(c.stamina+d.staminaChange,0,c.staminaMax);
-    if(d.rageChange)    c.rage    =clamp(c.rage+d.rageChange,0,c.rageMax);
-    if(d.goldChange)    c.gold    =Math.max(0,c.gold+d.goldChange);
+    // Stats vitales — on applique TOUJOURS même si 0
+    c.hp      = clamp(c.hp      + (d.hpChange||0),      0, c.hpMax);
+    c.stamina = clamp(c.stamina + (d.staminaChange||0),  0, c.staminaMax);
+    c.rage    = clamp(c.rage    + (d.rageChange||0),     0, c.rageMax);
+    if(d.goldChange) c.gold = Math.max(0,c.gold+d.goldChange);
 
     // SURVIE
     const hungerCost = (d.hungerChange !== undefined && d.hungerChange !== null) ? d.hungerChange : 0;
@@ -566,7 +600,20 @@ function App(){
     const inv=char.inventory.length>0?char.inventory.map(i=>i.icon+i.name+"×"+i.qty).join(", "):"AUCUN";
     const hh=String(char.hour).padStart(2,"0")+":00";
     const dateStr="Jour "+char.day+" Mois "+char.month+" | "+hh;
-    const ctx=`[${dateStr} | PV:${char.hp}/${char.hpMax} END:${char.stamina}/${char.staminaMax} RAGE:${char.rage}/${char.rageMax} Or:${char.gold}g Nv:${char.level}${char.unconscious?" | INCONSCIENT":""} | Lieu:${char.location} | Faim:${char.hunger}% Soif:${char.thirst}% Temp:${char.temp}°C | FOR:${char.stats.FOR+mal.forMod} AGI:${char.stats.AGI+mal.agiMod} | Inventaire:${inv}${enemy?" | COMBAT vs "+enemy.name+" (PV:"+enemy.hp+"/100)":""}]`;
+
+    // ── DÉ CLIENT-SIDE ──────────────────────────────────────────
+    const inCombat = !!enemy;
+    const clientRoll = rollD100();
+    let clientDmg = null;
+    if(inCombat){
+      clientDmg = calcCombatDamage(clientRoll, char.stats.FOR + mal.forMod, enemy.hp);
+    }
+    const rollLabel = clientRoll>=80?"CRITIQUE":clientRoll<=20?"DÉSASTRE":clientRoll>=51?"SUCCÈS":"ÉCHEC";
+    const combatCtx = inCombat
+      ? ` | COMBAT vs ${enemy.name} (PV ennemi:${enemy.hp}/100) | [ROLL:${clientRoll}=${rollLabel}] | Dégâts sur ennemi:${clientDmg.enemyDmg} | Dégâts sur Bjorn:${-clientDmg.playerDmg} | PV ennemi après:${clientDmg.newEnemyHp}`
+      : "";
+
+    const ctx=`[${dateStr} | PV:${char.hp}/${char.hpMax} END:${char.stamina}/${char.staminaMax} RAGE:${char.rage}/${char.rageMax} Or:${char.gold}g Nv:${char.level}${char.unconscious?" | INCONSCIENT":""} | Lieu:${char.location} | Faim:${char.hunger}% Soif:${char.thirst}% Temp:${char.temp}°C | FOR:${char.stats.FOR+mal.forMod} AGI:${char.stats.AGI+mal.agiMod} | Inventaire:${inv}${combatCtx}]`;
 
     try{
       const res=await fetch("https://api.anthropic.com/v1/messages",{
@@ -584,14 +631,32 @@ function App(){
       const jm=raw.match(/```json\s*([\s\S]*?)```/);
       if(jm){try{delta={...delta,...JSON.parse(jm[1])};}catch{} narrative=raw.replace(/```json[\s\S]*?```/,"").trim();}
 
-      // Ennemi
-      if(delta.event==="combat"&&delta.enemyName) setEnemy({name:delta.enemyName,hp:delta.enemyHp??100});
-      else if(delta.enemyHp!==null&&enemy) setEnemy(p=>p?{...p,hp:delta.enemyHp}:null);
-      if(delta.enemyHp===0){setEnemy(null);showNotif("☠️ Ennemi vaincu !","#cc4444");}
+      // ── OVERRIDE COMBAT AVEC VALEURS CLIENT-SIDE ──────────────
+      if(inCombat && clientDmg){
+        // On force les vrais dégâts calculés côté client
+        delta.roll    = clientRoll;
+        delta.success = clientRoll >= 51;
+        delta.hpChange = clientDmg.playerDmg; // négatif si dégâts reçus
+        // Mise à jour ennemi avec les vrais dégâts
+        const newEHp = clientDmg.newEnemyHp;
+        const eName  = enemy.name;
+        if(newEHp <= 0){
+          setEnemy(null);
+          delta.xpGain = (delta.xpGain||0) + 20 + Math.floor(Math.random()*20);
+          showNotif("☠️ "+eName+" vaincu !","#cc4444");
+        } else {
+          setEnemy({name:eName, hp:newEHp});
+        }
+      } else {
+        // Hors combat — gestion normale de l'ennemi si Claude en crée un
+        if(delta.event==="combat" && delta.enemyName && !enemy){
+          setEnemy({name:delta.enemyName, hp:delta.enemyHp??100});
+        }
+      }
 
-      // Son adaptatif — calcul APRÈS application du delta
+      // Son adaptatif
       const newHp=Math.max(0,Math.min(char.hpMax,(char.hp||0)+(delta.hpChange||0)));
-      const nextMode=delta.event==="combat"?"combat":delta.event==="rest"?"rest":newHp/char.hpMax<0.25?"danger":"explore";
+      const nextMode=inCombat?"combat":delta.event==="rest"?"rest":newHp/char.hpMax<0.25?"danger":"explore";
       updateSound(nextMode,newHp,char.hpMax);
 
       // Notifs
@@ -601,11 +666,12 @@ function App(){
       if(delta.goldChange<0)   showNotif("💰 "+delta.goldChange+" or","#aa6622");
       if(delta.xpGain>0)       showNotif("✨ +"+delta.xpGain+" XP","#aaddff");
       if(delta.lootItem)       showNotif("📦 "+delta.lootItem.icon+delta.lootItem.name,"#c8a040");
+      if(inCombat && clientDmg && clientDmg.enemyDmg>0) showNotif("⚔️ -"+clientDmg.enemyDmg+" PV ennemi","#ee6622");
 
       setChar(p=>applyDelta(delta,p));
-      const rc=delta.roll>=80?"#ffd700":delta.roll<=20?"#ff3333":delta.success?"#44cc77":"#cc4444";
-      const rl=delta.roll>=80?"CRITIQUE!":delta.roll<=20?"DÉSASTRE!":delta.success?"SUCCÈS":"ÉCHEC";
-      setMessages(p=>[...p,{role:"assistant",text:narrative,roll:delta.roll,rc,rl}]);
+      const rc=clientRoll>=80?"#ffd700":clientRoll<=20?"#ff3333":clientRoll>=51?"#44cc77":"#cc4444";
+      const rl=clientRoll>=80?"CRITIQUE!":clientRoll<=20?"DÉSASTRE!":clientRoll>=51?"SUCCÈS":"ÉCHEC";
+      setMessages(p=>[...p,{role:"assistant",text:narrative,roll:clientRoll,rc,rl}]);
       history.current.push({role:"assistant",content:narrative});
       setTab("journal");
     }catch(e){
