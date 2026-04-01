@@ -24,129 +24,110 @@
 const {useState,useEffect,useRef,useCallback} = React;
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SOUND ENGINE v2 — fréquences audibles, pas de beep répétitif
+// SOUND ENGINE v3 — simple, mobile-safe, pas de stale closure
 // ═══════════════════════════════════════════════════════════════════════════════
 class SoundEngine {
-  constructor(){ this.ctx=null; this.master=null; this.nodes=[]; this.mode=null; this.enabled=true; }
+  constructor(){ this.ctx=null; this.nodes=[]; this.curMode=null; }
 
-  init(){
-    if(this.ctx) return;
-    this.ctx = new (window.AudioContext||window.webkitAudioContext)();
-    this.master = this.ctx.createGain();
-    this.master.gain.value = 0.14;
-    this.master.connect(this.ctx.destination);
+  _ctx(){
+    if(!this.ctx){
+      this.ctx=new(window.AudioContext||window.webkitAudioContext)();
+    }
+    if(this.ctx.state==="suspended") this.ctx.resume();
+    return this.ctx;
   }
 
   stop(){
-    this.nodes.forEach(n=>{ try{ n.stop?.(); n.disconnect?.(); }catch{} });
+    this.nodes.forEach(n=>{ try{n.stop&&n.stop(); n.disconnect&&n.disconnect();}catch{} });
     this.nodes=[];
   }
 
-  // Drone continu avec vibrato lent — fréquences audibles 100-300Hz
-  drone(freq, vol, lfoRate=0.12, lfoDepth=3){
-    if(!this.ctx||!this.enabled) return;
-    const osc=this.ctx.createOscillator();
-    const lfo=this.ctx.createOscillator();
-    const lfoG=this.ctx.createGain();
-    const gain=this.ctx.createGain();
-    const filt=this.ctx.createBiquadFilter();
-    filt.type="lowpass"; filt.frequency.value=freq*4; filt.Q.value=0.7;
-    lfo.frequency.value=lfoRate; lfoG.gain.value=lfoDepth;
-    lfo.connect(lfoG); lfoG.connect(osc.frequency);
-    osc.type="triangle"; osc.frequency.value=freq;
-    gain.gain.value=0;
-    gain.gain.linearRampToValueAtTime(vol, this.ctx.currentTime+2.5);
-    osc.connect(filt); filt.connect(gain); gain.connect(this.master);
-    osc.start(); lfo.start();
-    this.nodes.push(osc,lfo,lfoG,gain,filt);
+  // Oscillateur simple avec fade-in
+  _osc(freq,vol,type="sine",fadeSec=1.5){
+    const c=this._ctx();
+    const o=c.createOscillator();
+    const g=c.createGain();
+    const comp=c.createDynamicsCompressor();
+    o.type=type; o.frequency.value=freq;
+    g.gain.setValueAtTime(0,c.currentTime);
+    g.gain.linearRampToValueAtTime(vol,c.currentTime+fadeSec);
+    o.connect(g); g.connect(comp); comp.connect(c.destination);
+    o.start(); this.nodes.push(o,g,comp);
   }
 
-  // Souffle grave (bruit filtré) — ambiance souterraine
-  wind(freq, vol){
-    if(!this.ctx||!this.enabled) return;
-    const buf=this.ctx.createBuffer(1,this.ctx.sampleRate*2,this.ctx.sampleRate);
+  // Bruit blanc filtré (vent/ambiance) — un seul buffer
+  _wind(freq,vol){
+    const c=this._ctx();
+    const buf=c.createBuffer(1,c.sampleRate,c.sampleRate);
     const d=buf.getChannelData(0);
-    for(let i=0;i<d.length;i++) d[i]=(Math.random()*2-1)*0.3;
-    const src=this.ctx.createBufferSource(); src.buffer=buf; src.loop=true;
-    const filt=this.ctx.createBiquadFilter(); filt.type="bandpass"; filt.frequency.value=freq; filt.Q.value=0.8;
-    const gain=this.ctx.createGain(); gain.gain.value=vol;
-    src.connect(filt); filt.connect(gain); gain.connect(this.master);
-    src.start(); this.nodes.push(src,filt,gain);
+    for(let i=0;i<d.length;i++) d[i]=(Math.random()*2-1);
+    const src=c.createBufferSource(); src.buffer=buf; src.loop=true;
+    const filt=c.createBiquadFilter(); filt.type="bandpass"; filt.frequency.value=freq; filt.Q.value=1.5;
+    const g=c.createGain(); g.gain.value=vol;
+    src.connect(filt); filt.connect(g); g.connect(c.destination);
+    src.start(); this.nodes.push(src,filt,g);
   }
 
-  // Goutte d'eau irrégulière
-  drip(){
-    if(!this.ctx||!this.enabled) return;
-    const sched=()=>{
-      if(!this.enabled) return;
-      const delay=(4+Math.random()*9)*1000;
+  // Gouttes irrégulières
+  _drip(){
+    const c=this._ctx();
+    const go=()=>{
       const t=setTimeout(()=>{
-        if(!this.enabled) return;
-        const osc=this.ctx.createOscillator();
-        const gain=this.ctx.createGain();
-        const f=350+Math.random()*200;
-        osc.type="sine"; osc.frequency.setValueAtTime(f,this.ctx.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(f*0.5,this.ctx.currentTime+0.35);
-        gain.gain.setValueAtTime(0.07,this.ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001,this.ctx.currentTime+0.4);
-        osc.connect(gain); gain.connect(this.master);
-        osc.start(); osc.stop(this.ctx.currentTime+0.45);
-        sched();
-      },delay);
+        if(!this.ctx) return;
+        const o=c.createOscillator(), g=c.createGain();
+        const f=300+Math.random()*250;
+        o.type="sine"; o.frequency.setValueAtTime(f,c.currentTime);
+        o.frequency.exponentialRampToValueAtTime(f*0.4,c.currentTime+0.5);
+        g.gain.setValueAtTime(0.08,c.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.001,c.currentTime+0.55);
+        o.connect(g); g.connect(c.destination);
+        o.start(); o.stop(c.currentTime+0.6);
+        go();
+      },(4+Math.random()*10)*1000);
       this.nodes.push({stop:()=>clearTimeout(t)});
     };
-    sched();
+    go();
   }
 
-  // Tension rythmique — volume qui ondule lentement (pas de beep !)
-  throb(freq, vol, rate){
-    if(!this.ctx||!this.enabled) return;
-    const osc=this.ctx.createOscillator();
-    const lfo=this.ctx.createOscillator();
-    const lfoG=this.ctx.createGain();
-    const gain=this.ctx.createGain();
-    osc.type="sawtooth"; osc.frequency.value=freq;
-    lfo.frequency.value=rate; lfoG.gain.value=vol*0.7;
-    gain.gain.value=vol*0.3;
-    lfo.connect(lfoG); lfoG.connect(gain.gain);
-    osc.connect(gain); gain.connect(this.master);
-    osc.start(); lfo.start();
-    this.nodes.push(osc,lfo,lfoG,gain);
-  }
-
-  setMode(mode, hp=100, hpMax=100){
-    if(!this.ctx||!this.enabled) return;
-    const key=mode+(hp/hpMax<0.3?"_crit":"");
-    if(key===this.mode) return;
-    this.stop(); this.mode=key;
+  play(mode, hpPct=1){
+    if(mode===this.curMode) return;
+    this.stop(); this.curMode=mode;
+    const danger=hpPct<0.3;
 
     if(mode==="explore"){
-      this.drone(130,0.07,0.12,4);   // fondamental grave
-      this.drone(195,0.04,0.18,2);   // quinte
-      this.wind(180,0.04);            // souffle souterrain
-      this.drip();                    // gouttes
-      if(hp/hpMax<0.3) this.drone(110,0.09,1.8,12); // tension danger
-    } else if(mode==="combat"){
-      this.drone(110,0.10,0.9,8);
-      this.drone(165,0.06,1.4,5);
-      this.throb(82,0.08,1.6);        // battement de tension (ondulation lente)
-      this.wind(200,0.05);
-      if(hp/hpMax<0.3) this.drone(88,0.12,2.5,14);
-    } else if(mode==="rest"){
-      this.drone(146,0.05,0.06,1.5);
-      this.drone(220,0.03,0.09,1);
-      this.drip();
-    } else if(mode==="danger"){
-      this.drone(98,0.13,2.2,12);
-      this.drone(147,0.07,2.8,8);
-      this.throb(73,0.07,2.0);
-    } else if(mode==="dead"){
-      this.drone(98,0.14,0.04,2);
-      this.wind(120,0.06);
+      // Ambiance donjon : drone grave + harmonique + vent + gouttes
+      this._osc(130,0.07,"sine",2);
+      this._osc(196,0.04,"sine",3);
+      this._wind(200,0.03);
+      this._drip();
+      if(danger) this._osc(110,0.06,"triangle",1);
+    }
+    else if(mode==="combat"){
+      // Tension : grave + distortion + trémolo via deux osc proches
+      this._osc(110,0.10,"sawtooth",1);
+      this._osc(113,0.07,"sawtooth",1); // battement naturel 3Hz
+      this._osc(220,0.04,"triangle",2);
+      this._wind(150,0.04);
+      if(danger) this._osc(85,0.09,"sawtooth",0.5);
+    }
+    else if(mode==="rest"){
+      this._osc(174,0.05,"sine",3);
+      this._osc(261,0.03,"sine",4);
+      this._drip();
+    }
+    else if(mode==="danger"){
+      this._osc(98,0.11,"sawtooth",0.8);
+      this._osc(102,0.08,"sawtooth",0.8); // battement 4Hz — tension
+      this._wind(130,0.05);
+    }
+    else if(mode==="dead"){
+      this._osc(98,0.10,"sine",2);
+      this._wind(110,0.06);
     }
   }
 
-  toggle(v){ this.enabled=v; if(!v) this.stop(); else if(this.ctx) this.setMode(this.mode?.replace("_crit","")||"explore"); }
+  setMode(mode,hp=100,hpMax=100){ this.play(mode,hp/hpMax); }
+  init(){ this._ctx(); }
 }
 const SE = new SoundEngine();
 
@@ -300,16 +281,18 @@ const APIKEY_KEY="stb_key";
 // ═══════════════════════════════════════════════════════════════════════════════
 // APP
 // ═══════════════════════════════════════════════════════════════════════════════
+const INIT_MSG=[{role:"assistant",text:"Les portes de pierre s'ouvrent dans un grondement sourd. Tu es Bjorn — mains nues, ventre vide, gorge sèche. Le donjon est glacial. Tu n'as rien. Personne ne t'aidera. Que fais-tu ?",roll:null}];
+
+function hasSave(){ try{return !!localStorage.getItem(SAVE_KEY);}catch{return false;} }
+function loadSave(){ try{const s=localStorage.getItem(SAVE_KEY);return s?JSON.parse(s):null;}catch{return null;} }
+
 function App(){
   const [apiKey,setApiKey]=useState(localStorage.getItem(APIKEY_KEY)||"");
   const [keySet,setKeySet]=useState(!!localStorage.getItem(APIKEY_KEY));
-  const [char,setChar]=useState(()=>{
-    try{const s=localStorage.getItem(SAVE_KEY);return s?JSON.parse(s).char:INITIAL_CHAR;}catch{return INITIAL_CHAR;}
-  });
-  const [messages,setMessages]=useState(()=>{
-    try{const s=localStorage.getItem(SAVE_KEY);return s?JSON.parse(s).messages:[{role:"assistant",text:"Les portes de pierre s'ouvrent dans un grondement sourd. Tu es Bjorn — mains nues, ventre vide, gorge sèche. Le donjon est glacial. Tu n'as rien. Personne ne t'aidera. Que fais-tu ?",roll:null}];}
-    catch{return [{role:"assistant",text:"Les portes de pierre s'ouvrent dans un grondement sourd. Tu es Bjorn — mains nues, ventre vide, gorge sèche. Le donjon est glacial. Tu n'as rien. Personne ne t'aidera. Que fais-tu ?",roll:null}];}
-  });
+  // screen: "start" | "game"
+  const [screen,setScreen]=useState(()=> hasSave() && !!localStorage.getItem(APIKEY_KEY) ? "start" : "game");
+  const [char,setChar]=useState(INITIAL_CHAR);
+  const [messages,setMessages]=useState(INIT_MSG);
   const [input,setInput]=useState("");
   const [loading,setLoad]=useState(false);
   const [tab,setTab]=useState("journal");
@@ -318,6 +301,7 @@ function App(){
   const [saveFlash,setSaveFlash]=useState(false);
   const [newSkill,setNewSkill]=useState(null);
   const [soundOn,setSoundOn]=useState(false);
+  const soundOnRef=useRef(false);
   const [dead,setDead]=useState(false);
   const [unconscious,setUnconscious]=useState(()=>{ try{const s=localStorage.getItem("stb_save_v3");return s?JSON.parse(s).char?.unconscious||false:false;}catch{return false;} });
   const endRef=useRef(null);
@@ -337,7 +321,7 @@ function App(){
   useEffect(()=>{
     if(char.hp<=0&&!dead){
       setDead(true); setUnconscious(false);
-      SE.setMode("dead",0,1);
+      if(soundOnRef.current) SE.play("dead",0);
       setMessages(p=>[...p,{role:"assistant",text:"☠ BJORN EST MORT. La faim, la soif, le froid ou les coups ont eu raison de toi. Le donjon n'a aucune pitié. Recommence.",roll:null}]);
     }
   },[char.hp]);
@@ -345,7 +329,7 @@ function App(){
   useEffect(()=>{
     if(char.unconscious && !unconscious){
       setUnconscious(true);
-      SE.setMode("danger",char.hp,char.hpMax);
+      if(soundOnRef.current) SE.play("danger",char.hp/char.hpMax);
       setMessages(p=>[...p,{role:"assistant",text:"⚠️ Bjorn s'effondre, à bout de forces. Il est inconscient. Ses yeux se ferment malgré lui...",roll:null}]);
     }
     if(!char.unconscious && unconscious) setUnconscious(false);
@@ -353,19 +337,19 @@ function App(){
 
   // ── SON ──────────────────────────────────────────────────────────────────────
   const updateSound=(mode,hp,hpMax)=>{
-    if(!soundOn)return;
     soundMode.current=mode;
-    SE.setMode(mode,hp,hpMax);
+    if(!soundOnRef.current) return;
+    SE.play(mode, hp/hpMax);
   };
 
   const toggleSound=()=>{
-    if(!soundOn){
+    if(!soundOnRef.current){
       SE.init();
-      SE.setMode(soundMode.current||"explore",char.hp,char.hpMax);
-      setSoundOn(true);
+      SE.play(soundMode.current||"explore", char.hp/char.hpMax);
+      soundOnRef.current=true; setSoundOn(true);
     } else {
-      SE.toggle(false);
-      setSoundOn(false);
+      SE.stop(); SE.curMode=null;
+      soundOnRef.current=false; setSoundOn(false);
     }
   };
 
@@ -378,20 +362,43 @@ function App(){
 
   const manualSave=()=>{
     try{
-      localStorage.setItem(SAVE_KEY,JSON.stringify({char,messages:messages.slice(-50)}));
+      localStorage.setItem(SAVE_KEY,JSON.stringify({char,messages:messages.slice(-50),savedAt:Date.now()}));
       setSaveFlash(true); setTimeout(()=>setSaveFlash(false),1500);
       showNotif("💾 Sauvegardé !","#44aaff");
     }catch{showNotif("⚠️ Erreur save","#cc4444");}
   };
 
+  const loadGame=()=>{
+    const s=loadSave();
+    if(!s){showNotif("Aucune sauvegarde !","#cc4444");return;}
+    setChar(s.char||INITIAL_CHAR);
+    setMessages(s.messages||INIT_MSG);
+    history.current=[];
+    setDead(false); setUnconscious(false); setEnemy(null);
+    setScreen("game");
+    showNotif("📂 Partie chargée","#44aaff");
+  };
+
+  const deleteSave=()=>{
+    if(!window.confirm("Supprimer la sauvegarde définitivement ?")) return;
+    localStorage.removeItem(SAVE_KEY);
+    showNotif("🗑 Sauvegarde supprimée","#cc4444");
+    setScreen("game");
+    setChar(INITIAL_CHAR);
+    setMessages(INIT_MSG);
+    history.current=[];
+    setDead(false); setUnconscious(false); setEnemy(null);
+  };
+
   const resetGame=()=>{
-    if(!window.confirm("Recommencer depuis le début ?"))return;
+    if(!window.confirm("Effacer la partie actuelle et recommencer ?"))return;
     localStorage.removeItem(SAVE_KEY);
     setChar(INITIAL_CHAR);
-    setMessages([{role:"assistant",text:"Les portes de pierre s'ouvrent dans un grondement sourd. Tu es Bjorn — mains nues, ventre vide, gorge sèche. Le donjon est glacial. Tu n'as rien. Que fais-tu ?",roll:null}]);
-    setEnemy(null); setDead(false); history.current=[];
+    setMessages(INIT_MSG);
+    setEnemy(null); setDead(false); setUnconscious(false); history.current=[];
+    setScreen("game");
     showNotif("🔄 Nouvelle partie","#c8862a");
-    SE.setMode("explore");
+    if(soundOnRef.current) SE.play("explore",1);
   };
 
   // ── DELTA APPLICATION ────────────────────────────────────────────────────────
@@ -542,6 +549,54 @@ function App(){
   const mal=getSurvivalMalus(char);
   const warnings=getSurvivalStatus(char);
   const isDanger=char.hp/char.hpMax<0.25||char.hunger<20||char.thirst<20||char.temp<0||char.temp>40;
+
+  // ══ ÉCRAN DE DÉMARRAGE ═══════════════════════════════════════════════════════
+  if(screen==="start"){
+    const s=loadSave();
+    const savedAt=s?.savedAt ? new Date(s.savedAt) : null;
+    const savedStr=savedAt ? savedAt.toLocaleDateString("fr-FR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}) : "—";
+    const sc=s?.char||INITIAL_CHAR;
+    return(
+      <div style={{height:"100%",background:"#0a0704",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24,fontFamily:"'EB Garamond',serif"}}>
+        <div style={{fontSize:22,fontFamily:"'Cinzel',serif",color:"#c8862a",letterSpacing:2,textAlign:"center",marginBottom:4}}>⚔ SURVIVING<br/>THE DUNGEON</div>
+        <div style={{fontSize:10,color:"#7a5030",letterSpacing:3,marginBottom:28,textAlign:"center"}}>AS A BARBARIAN</div>
+
+        <div style={{width:"100%",maxWidth:360,background:"#0e0a02",border:"1px solid #3a2010",borderRadius:12,padding:"18px 20px",marginBottom:20}}>
+          <div style={{fontSize:10,color:"#5a3818",fontFamily:"'Cinzel',serif",letterSpacing:2,marginBottom:12}}>▸ SAUVEGARDE</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+            {[
+              {label:"Personnage",val:sc.name+" Nv."+sc.level},
+              {label:"Lieu",      val:sc.location},
+              {label:"PV",        val:sc.hp+"/"+sc.hpMax},
+              {label:"Or",        val:sc.gold+"g"},
+              {label:"Jour",      val:"J"+sc.day+" M"+sc.month},
+              {label:"Sauvé le",  val:savedStr},
+            ].map((r,i)=>(
+              <div key={i} style={{background:"#120a02",border:"1px solid #2a1808",borderRadius:6,padding:"6px 10px"}}>
+                <div style={{fontSize:9,color:"#5a3818",letterSpacing:1}}>{r.label}</div>
+                <div style={{fontSize:12,color:"#d4a870"}}>{r.val}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{display:"flex",gap:8,marginTop:8}}>
+            <button onClick={loadGame}
+              style={{flex:2,background:"linear-gradient(135deg,#0a3010,#1a5020)",border:"1px solid #44aa66",borderRadius:8,color:"#88dd99",padding:"11px",cursor:"pointer",fontFamily:"'Cinzel',serif",fontSize:13,letterSpacing:1}}>
+              ▶ Continuer
+            </button>
+            <button onClick={deleteSave}
+              style={{flex:1,background:"#100404",border:"1px solid #5a1010",borderRadius:8,color:"#884444",padding:"11px",cursor:"pointer",fontFamily:"'Cinzel',serif",fontSize:11}}>
+              🗑 Supprimer
+            </button>
+          </div>
+        </div>
+
+        <button onClick={()=>{localStorage.removeItem(SAVE_KEY);setChar(INITIAL_CHAR);setMessages(INIT_MSG);history.current=[];setScreen("game");}}
+          style={{width:"100%",maxWidth:360,background:"#1a0e04",border:"1px solid #3a2010",borderRadius:8,color:"#7a5030",padding:"10px",cursor:"pointer",fontFamily:"'Cinzel',serif",fontSize:11,letterSpacing:1}}>
+          + Nouvelle partie (efface la save)
+        </button>
+      </div>
+    );
+  }
 
   // ══ UI PRINCIPALE ════════════════════════════════════════════════════════════
   return(
@@ -707,6 +762,10 @@ function App(){
               <button onClick={manualSave} style={{flex:1,background:"#04100a",border:"1px solid #1a4020",borderRadius:8,color:"#44aa66",padding:"9px",cursor:"pointer",fontSize:11,fontFamily:"'Cinzel',serif"}}>💾 Sauvegarder</button>
               <button onClick={resetGame}  style={{flex:1,background:"#100404",border:"1px solid #3a1010",borderRadius:8,color:"#884444",padding:"9px",cursor:"pointer",fontSize:11,fontFamily:"'Cinzel',serif"}}>🔄 Recommencer</button>
             </div>
+            <button onClick={()=>setScreen("start")}
+              style={{width:"100%",background:"#080c10",border:"1px solid #1a2a3a",borderRadius:8,color:"#4466aa",padding:"9px",cursor:"pointer",fontSize:11,fontFamily:"'Cinzel',serif",marginBottom:6}}>
+              📂 Menu sauvegardes
+            </button>
             <button onClick={()=>{localStorage.removeItem(APIKEY_KEY);setKeySet(false);setApiKey("");}}
               style={{width:"100%",background:"#0a0808",border:"1px solid #2a1010",borderRadius:8,color:"#5a3030",padding:"8px",cursor:"pointer",fontSize:10,fontFamily:"'Cinzel',serif",marginBottom:4}}>
               🔑 Changer la clé API
