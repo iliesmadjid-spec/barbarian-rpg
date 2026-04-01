@@ -270,62 +270,7 @@ function buildSystemPrompt(charName, originId, scenarioId, scenarioPrompt){
 Le joueur incarne ${charName||"Bjorn"}, un barbare (origine : ${origin.label}) réincarné dans ce cauchemar.${scenCtx}`;
 }
 
-const SYSTEM_PROMPT_SUFFIX = `
-
-RÈGLES FONDAMENTALES :
-- Le jeu est TRÈS DIFFICILE. Économie brutale : objets rares, chers, nécessitant des sacrifices.
-- Le personnage n'a RIEN au départ (sauf équipement de départ selon son origine). Tout doit être gagné.
-- Eau rare. Nourriture encore plus rare. Jamais gratuit.
-- Température : niveaux profonds glaciaux, certaines zones brûlantes.
-- Les PNJs sont méfiants. Pas de filet de sécurité.
-- Ton : brutal, viscéral, sans pitié. Max 4 phrases.
-
-RÈGLES DE DÉS — OBLIGATOIRE :
-- Le contexte te fournit TOUJOURS ROLL:X=RÉSULTAT pour chaque action.
-- Tu DOIS narrer l'action en cohérence STRICTE avec ce résultat :
-  * CRITIQUE (80+) : exploit total, résultat bien au-delà des espérances
-  * SUCCÈS (51-79) : action réussie, résultat positif mais parfois partiel
-  * ÉCHEC (21-50)  : action ratée, conséquences négatives ou neutres
-  * DÉSASTRE (≤20) : catastrophe, pire scénario possible
-- Ne jamais décrire un succès si le roll indique ÉCHEC, et vice-versa.
-- En combat : fournis TOUJOURS enemyName et enemyHp (PV après dégâts calculés dans le contexte).
-- hpChange en combat : négatif si le personnage reçoit des coups (jamais 0 sauf esquive totale critique).
-- xpGain : 10-30 XP par ennemi vaincu (enemyHp=0).
-
-RÈGLES DE SURVIE — hungerChange et thirstChange DOIVENT refléter la logique de l'action :
-- Se reposer / dormir          → faim: 0   soif: 0   temps: +6h
-- Parler / observer / attendre → faim: 0   soif: 0   temps: +10min
-- Marcher / explorer           → faim: -3  soif: -3  temps: +30min
-- Combat court (<3 rounds)     → faim: -4  soif: -6  temps: +10min
-- Combat long / sprint / fuite → faim: -6  soif: -9  temps: +20min
-- Utiliser une compétence rage → faim: -5  soif: -7  temps: +10min
-- Manger (loot food)           → faim: +25 à +40, temps: +15min
-- Boire (loot water)           → soif: +30 à +50, temps: +5min
-- Zone chaude >35°C            → soif -4 supplémentaire
-- Zone froide <5°C             → temp baisse de -2 à -5
-
-TOUJOURS fournir hungerChange, thirstChange, timeChange selon l'action réelle.
-timeChange = nombre de minutes écoulées (ex: 30 pour 30min, 360 pour 6h).
-
-FORMAT JSON OBLIGATOIRE dans un bloc \`\`\`json\`\`\` AVANT le texte :
-{
-  "roll": <1-100 ou null>,
-  "success": <true/false/null>,
-  "hpChange": <nombre>,
-  "staminaChange": <nombre>,
-  "rageChange": <nombre>,
-  "goldChange": <nombre>,
-  "xpGain": <nombre>,
-  "hungerChange": <nombre — OBLIGATOIRE>,
-  "thirstChange": <nombre — OBLIGATOIRE>,
-  "tempChange": <variation °C ou 0>,
-  "timeChange": <minutes écoulées — OBLIGATOIRE, min 5>,
-  "event": <"combat"|"explore"|"dialogue"|"loot"|"rest"|null>,
-  "enemyHp": <null ou 0-100>,
-  "enemyName": <null ou string>,
-  "locationChange": <null ou string>,
-  "lootItem": <null ou {"name":"...","type":"weapon|armor|consumable|food|water","icon":"emoji","qty":1,"weight":<kg>}>
-}`;
+const SYSTEM_PROMPT_SUFFIX = "\n\nRÈGLES FONDAMENTALES :\n- Le jeu est TRÈS DIFFICILE. Économie brutale : objets rares, chers.\n- Le personnage n'a RIEN au départ sauf équipement d'origine. Tout doit être gagné.\n- Eau rare. Nourriture encore plus rare. Jamais gratuit.\n- Température : niveaux profonds glaciaux, certaines zones brûlantes.\n- Les PNJs sont méfiants. Pas de filet de sécurité.\n- Ton : brutal, viscéral, sans pitié. Max 4 phrases.\n\nRÈGLES DE DÉS — OBLIGATOIRE :\n- Le contexte fournit TOUJOURS ROLL:X=RÉSULTAT pour chaque action.\n- Narrer en cohérence STRICTE : CRITIQUE(80+)=exploit | SUCCÈS(51-79)=réussi | ÉCHEC(21-50)=raté | DÉSASTRE(≤20)=catastrophe\n- Ne jamais décrire un succès si le roll indique ÉCHEC, et vice-versa.\n- En combat : fournis TOUJOURS enemyName et enemyHp.\n- hpChange en combat : négatif si coups reçus.\n- xpGain : 10-30 XP par ennemi vaincu.\n\nRÈGLES DE SURVIE :\n- Repos/parler : faim 0, soif 0, temps +6h ou +10min\n- Explorer : faim -3, soif -3, temps +30min\n- Combat court : faim -4, soif -6, temps +10min\n- Combat long/fuite : faim -6, soif -9, temps +20min\n- Compétence rage : faim -5, soif -7, temps +10min\n- Manger : faim +25à+40 | Boire : soif +30à+50\n\nFORMAT JSON OBLIGATOIRE dans un bloc ```json``` AVANT le texte :\n{\n  \"roll\": <1-100 ou null>,\n  \"success\": <true/false/null>,\n  \"hpChange\": <nombre>,\n  \"staminaChange\": <nombre>,\n  \"rageChange\": <nombre>,\n  \"goldChange\": <nombre>,\n  \"xpGain\": <nombre>,\n  \"hungerChange\": <nombre OBLIGATOIRE>,\n  \"thirstChange\": <nombre OBLIGATOIRE>,\n  \"tempChange\": <variation C ou 0>,\n  \"timeChange\": <minutes OBLIGATOIRE min 5>,\n  \"event\": <combat|explore|dialogue|loot|rest|null>,\n  \"enemyHp\": <null ou 0-100>,\n  \"enemyName\": <null ou string>,\n  \"locationChange\": <null ou string>,\n  \"lootItem\": <null ou {name,type,icon,qty,weight}>\n}";
 // Référence statique (écrasée au début de partie)
 let SYSTEM_PROMPT = buildSystemPrompt("Bjorn","sauvage","default","") + SYSTEM_PROMPT_SUFFIX;
 
@@ -951,15 +896,11 @@ function App(){
     </div>
   );
 
-  const mal=getSurvivalMalus(char);
-  const warnings=getSurvivalStatus(char);
-  const isDanger=char.hp/char.hpMax<0.25||char.hunger<20||char.thirst<20||char.temp<0||char.temp>40;
-
   // ══ MENU PRINCIPAL ═══════════════════════════════════════════════════════════
   if(screen==="start"){
     const saves=listSaves();
     const hasAny=saves.some(Boolean);
-    const C={h:"100%",background:"#0a0704",display:"flex",flexDirection:"column",alignItems:"center",overflowY:"auto",padding:"24px 20px",fontFamily:"'EB Garamond',serif"};
+    const C={height:"100%",background:"#0a0704",display:"flex",flexDirection:"column",alignItems:"center",overflowY:"auto",padding:"24px 20px",fontFamily:"'EB Garamond',serif"};
     return(
       <div style={C}>
         <div style={{fontSize:24,fontFamily:"'Cinzel',serif",color:"#c8862a",letterSpacing:2,textAlign:"center",marginBottom:4,marginTop:8}}>⚔ SURVIVING<br/>THE DUNGEON</div>
@@ -1107,6 +1048,11 @@ function App(){
       </div>
     );
   }
+
+  // Calculs survie — uniquement pour l'écran de jeu (après tous les early returns)
+  const mal=getSurvivalMalus(char);
+  const warnings=getSurvivalStatus(char);
+  const isDanger=char.hp/char.hpMax<0.25||char.hunger<20||char.thirst<20||char.temp<0||char.temp>40;
 
   // ══ UI PRINCIPALE ════════════════════════════════════════════════════════════
   return(
