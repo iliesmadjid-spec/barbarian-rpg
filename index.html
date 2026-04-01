@@ -516,11 +516,23 @@ function App(){
     setChar(savedChar);
     const savedMsgs=s.messages||INIT_MSG;
     setMessages(savedMsgs);
-    // Reconstruire l'historique API depuis les messages sauvegardés (10 derniers)
-    history.current=savedMsgs.slice(-10).map(m=>({
-      role:m.role==="assistant"?"assistant":"user",
-      content:m.text||""
-    }));
+    // Reconstruire l'historique API — l'API exige user/assistant alternés, commençant par user
+    const rawHistory = savedMsgs
+      .filter(m=>m.text&&m.text.trim()&&!m.text.startsWith("⚠️")) // exclure messages d'erreur
+      .slice(-12)
+      .map(m=>({role:m.role==="assistant"?"assistant":"user", content:m.text.trim()}));
+    // Supprimer les doublons de rôle consécutifs (garder le dernier)
+    const dedupedHistory = [];
+    for(const msg of rawHistory){
+      if(dedupedHistory.length>0 && dedupedHistory[dedupedHistory.length-1].role===msg.role){
+        dedupedHistory[dedupedHistory.length-1]=msg; // remplace le précédent même rôle
+      } else {
+        dedupedHistory.push(msg);
+      }
+    }
+    // Doit commencer par "user" — sinon l'API rejette
+    while(dedupedHistory.length>0 && dedupedHistory[0].role!=="user") dedupedHistory.shift();
+    history.current = dedupedHistory;
     setDead(savedChar.hp<=0);
     setUnconscious(savedChar.unconscious||false);
     setEnemy(s.enemy||null);
@@ -573,11 +585,15 @@ function App(){
     if(mal.hpDrain>0)   c.hp      =Math.max(0,c.hp-mal.hpDrain);
     if(mal.staDrain>0)  c.stamina =Math.max(0,c.stamina-mal.staDrain);
 
-    // Loot
-    if(d.lootItem){
-      const ex=c.inventory.find(i=>i.name===d.lootItem.name);
-      if(ex) c.inventory=c.inventory.map(i=>i.name===d.lootItem.name?{...i,qty:i.qty+(d.lootItem.qty||1)}:i);
-      else   c.inventory=[...c.inventory,{...d.lootItem,qty:d.lootItem.qty||1}];
+    // Loot — guard qty>0 + normalisation des champs
+    if(d.lootItem && d.lootItem.name){
+      const lootQty = Math.max(1, parseInt(d.lootItem.qty)||1); // jamais 0 ni négatif
+      const lootItem = {...d.lootItem, qty:lootQty,
+        type: d.lootItem.type||"misc",
+        icon: d.lootItem.icon||"📦"};
+      const ex=c.inventory.find(i=>i.name===lootItem.name);
+      if(ex) c.inventory=c.inventory.map(i=>i.name===lootItem.name?{...i,qty:i.qty+lootQty}:i);
+      else   c.inventory=[...c.inventory, lootItem];
     }
 
     // XP / Level up
@@ -617,7 +633,7 @@ function App(){
     history.current.push({role:"user",content:txt});
 
     const mal=getSurvivalMalus(char);
-    const inv=char.inventory.length>0?char.inventory.map(i=>i.icon+i.name+"×"+i.qty).join(", "):"AUCUN";
+    const inv=char.inventory.length>0?char.inventory.map(i=>(i.icon||"📦")+i.name+"["+(i.type||"misc")+"]×"+(i.qty||1)).join(", "):"AUCUN";
     const hh=String(char.hour).padStart(2,"0")+":00";
     const dateStr="Jour "+char.day+" Mois "+char.month+" | "+hh;
 
@@ -708,17 +724,33 @@ function App(){
   };
 
   const useConsumable=(item)=>{
-    if(item.qty<=0){showNotif("Aucun(e) "+item.name+" !","#cc4444");return;}
+    // Vérification dans le char courant avant de muter
+    const currentItem = char.inventory.find(i=>i.name===item.name);
+    if(!currentItem||currentItem.qty<=0){
+      showNotif("Plus de "+item.name+" !","#cc4444");
+      return;
+    }
     let hp=0,hunger=0,thirst=0;
-    if(item.type==="consumable"){hp=40;showNotif("❤️ +40 PV","#44cc77");}
-    if(item.type==="food"){hunger=35;showNotif("🍖 +35 Faim","#cc8833");}
-    if(item.type==="water"){thirst=45;showNotif("💧 +45 Soif","#3388cc");}
-    setChar(p=>({...p,
-      hp:clamp(p.hp+hp,0,p.hpMax),
-      hunger:clamp(p.hunger+hunger,0,p.hungerMax),
-      thirst:clamp(p.thirst+thirst,0,p.thirstMax),
-      inventory:p.inventory.map(i=>i.name===item.name?{...i,qty:i.qty-1}:i).filter(i=>i.qty>0)
-    }));
+    if(item.type==="consumable") hp=40;
+    if(item.type==="food")       hunger=35;
+    if(item.type==="water")      thirst=45;
+    // Notif hors setter — pas de side-effect dans fonction pure
+    if(item.type==="consumable") showNotif("❤️ +40 PV","#44cc77");
+    else if(item.type==="food")  showNotif("🍖 +35 Faim","#cc8833");
+    else if(item.type==="water") showNotif("💧 +45 Soif","#3388cc");
+    // Double guard dans setter pour protéger contre les doubles appels React
+    setChar(p=>{
+      const c=p.inventory.find(i=>i.name===item.name);
+      if(!c||c.qty<=0) return p;
+      return {...p,
+        hp:     clamp(p.hp+hp,         0, p.hpMax),
+        hunger: clamp(p.hunger+hunger,  0, p.hungerMax),
+        thirst: clamp(p.thirst+thirst,  0, p.thirstMax),
+        inventory: p.inventory
+          .map(i=>i.name===item.name ? {...i,qty:i.qty-1} : i)
+          .filter(i=>i.qty>0)
+      };
+    });
   };
 
   // Récupération d'inconscience — Bjorn reprend conscience lentement
@@ -943,8 +975,8 @@ function App(){
             {char.inventory.length===0
               ?<div style={{background:"#0a0804",border:"1px dashed #2a1808",borderRadius:8,padding:"14px",textAlign:"center",color:"#3a2808",fontSize:12,fontStyle:"italic",marginBottom:12}}>Vide — explore pour trouver eau, nourriture et équipement.</div>
               :<div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:12}}>
-                {char.inventory.map((it,i)=>(
-                  <div key={i} style={{background:"#0e0a02",border:"1px solid #2a1808",borderRadius:10,padding:"8px 12px",display:"flex",alignItems:"center",gap:10}}>
+                {char.inventory.map((it)=>(
+                  <div key={it.name} style={{background:"#0e0a02",border:"1px solid #2a1808",borderRadius:10,padding:"8px 12px",display:"flex",alignItems:"center",gap:10}}>
                     <span style={{fontSize:20}}>{it.icon}</span>
                     <div style={{flex:1}}>
                       <div style={{fontSize:13,color:"#d4a870"}}>{it.name}</div>
