@@ -2,27 +2,21 @@
 <html lang="fr">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Surviving the Dungeon — As a Barbarian</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <title>Surviving the Dungeon — Barbarian</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
-  <link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@700&family=Cinzel:wght@400;600;700&family=EB+Garamond:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=EB+Garamond:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet" />
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { background: #0a0704; }
-    @keyframes fadeNotif {
-      0%   { opacity:0; transform:translateX(-50%) translateY(-8px) }
-      15%  { opacity:1; transform:translateX(-50%) translateY(0) }
-      70%  { opacity:1 }
-      100% { opacity:0 }
-    }
-    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
-    ::-webkit-scrollbar { width: 4px }
-    ::-webkit-scrollbar-track { background: #0a0704 }
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    html, body, #root { height: 100%; background: #0a0704; }
+    body { overflow: hidden; }
+    @keyframes fadeNotif { 0%{opacity:0;transform:translateX(-50%) translateY(-10px)} 15%{opacity:1;transform:translateX(-50%) translateY(0)} 75%{opacity:1} 100%{opacity:0} }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+    @keyframes slideIn { from{opacity:0;transform:translateY(20px)} to{opacity:1;transform:translateY(0)} }
+    ::-webkit-scrollbar { width: 3px }
     ::-webkit-scrollbar-thumb { background: #3a2010; border-radius: 2px }
-    input:focus { border-color: #c8762a !important; box-shadow: 0 0 8px #c8762a22 !important; outline: none; }
-    button:hover { filter: brightness(1.15); }
   </style>
 </head>
 <body>
@@ -30,41 +24,44 @@
 <script type="text/babel">
 const { useState, useEffect, useRef, useCallback } = React;
 
+// ── Toutes les compétences du jeu (débloquées progressivement) ────────────────
+const ALL_SKILLS = [
+  { id:"s1", name:"Frappe Brutale",   unlockLv:2,  cost:10, type:"rage",    desc:"Écrase l'ennemi avec une force dévastatrice.",      dmg:"2d10+FOR" },
+  { id:"s2", name:"Cri de Guerre",    unlockLv:3,  cost:20, type:"rage",    desc:"Terrifie les ennemis proches, réduit leur ATK.",    dmg:"—" },
+  { id:"s3", name:"Peau d'Écorce",    unlockLv:4,  cost:15, type:"stamina", desc:"+4 DEF pendant 3 tours.",                          dmg:"—" },
+  { id:"s4", name:"Tourbillon",       unlockLv:6,  cost:30, type:"rage",    desc:"Touche tous les ennemis adjacents.",                dmg:"1d8+FOR" },
+  { id:"s5", name:"Rugissement",      unlockLv:5,  cost:25, type:"rage",    desc:"Augmente ta FOR de +3 pendant 2 tours.",            dmg:"—" },
+  { id:"s6", name:"Charge Sauvage",   unlockLv:8,  cost:35, type:"stamina", desc:"Fonce sur l'ennemi, étourdit 1 tour.",              dmg:"1d12+FOR" },
+  { id:"s7", name:"Transe Barbare",   unlockLv:10, cost:50, type:"rage",    desc:"Entre en état de transe, immunité à la douleur 3t.", dmg:"—" },
+];
+
 const INITIAL_CHAR = {
-  name: "Bjorn", class: "Barbare", level: 1, xp: 0, xpNext: 100,
-  hp: 120, hpMax: 120, stamina: 80, staminaMax: 80, rage: 0, rageMax: 100,
-  stats: { FOR: 18, AGI: 10, END: 16, INT: 4, CHA: 3, PER: 8 },
-  skills: [
-    { name: "Frappe Brutale", cost: 10, type: "rage", desc: "Écrase l'ennemi avec une force dévastatrice.", dmg: "2d10+FOR" },
-    { name: "Cri de Guerre",  cost: 20, type: "rage", desc: "Terrifie les ennemis proches, réduisant leur ATK.", dmg: "—" },
-    { name: "Peau d'Écorce",  cost: 15, type: "stamina", desc: "+4 DEF pendant 3 tours.", dmg: "—" },
-    { name: "Tourbillon",     cost: 30, type: "rage", desc: "Touche tous les ennemis adjacents.", dmg: "1d8+FOR" },
-  ],
-  inventory: [
-    { name: "Hache de guerre", type: "weapon",    qty: 1, icon: "🪓" },
-    { name: "Peau de bête",    type: "armor",     qty: 1, icon: "🛡️" },
-    { name: "Potion de soin",  type: "consumable",qty: 3, icon: "🧪" },
-    { name: "Viande séchée",   type: "food",      qty: 5, icon: "🥩" },
-  ],
-  gold: 12, floor: 1, location: "Entrée du Donjon",
+  name:"Bjorn", class:"Barbare", level:1, xp:0, xpNext:100,
+  hp:80, hpMax:80, stamina:60, staminaMax:60, rage:0, rageMax:100,
+  stats:{ FOR:14, AGI:8, END:12, INT:3, CHA:2, PER:6 },
+  skills:[], // Aucune compétence au départ
+  inventory:[], // Aucun objet au départ
+  gold:0, floor:1, location:"Entrée du Donjon",
 };
 
 const SYSTEM_PROMPT = `Tu es le Maître du Jeu d'un RPG sombre basé sur le manhwa "Surviving the Game as a Barbarian".
-Le joueur incarne Bjorn, un barbare brutal réincarné dans le jeu "Dungeon & Stone".
+Le joueur incarne Bjorn, un barbare de niveau 1 — mains nues, sans équipement, sans compétences. Il vient d'être réincarné dans le jeu "Dungeon & Stone".
 
 RÈGLES DU JEU :
 - Système D100 : lancé automatiquement à chaque action risquée. <50 = échec, >50 = succès. 80+ = critique, 20- = catastrophe.
 - Toujours décrire les résultats en tenant compte des stats (FOR/AGI/END/INT/CHA/PER).
-- Environnement : donjons dangereux, monstres impitoyables, PNJs méfiants.
+- Bjorn commence SANS arme, SANS armure, SANS compétences. Il doit TOUT trouver dans le donjon.
+- Les objets (armes, armures, potions, or) doivent être trouvés/volés/craftés en jeu via loot ou événements.
+- Les compétences se débloquent automatiquement à chaque montée de niveau (le jeu le gère).
+- Environnement : donjons dangereux, monstres impitoyables, pièges, PNJs méfiants.
 - Ton : brutal, viscéral, dark fantasy. Descriptions courtes et percutantes. Max 4 phrases par réponse.
-- Quand combat : affiche les dégâts, PV restants ennemis, état du joueur.
 - À chaque action, retourne un JSON structuré UNIQUEMENT dans un bloc \`\`\`json ... \`\`\` SUIVI du texte narratif.
 
 FORMAT JSON OBLIGATOIRE :
 {
   "roll": <null ou nombre 1-100>,
   "success": <true/false/null>,
-  "hpChange": <nombre positif=soin, négatif=dégâts, 0=rien>,
+  "hpChange": <nombre>,
   "staminaChange": <nombre>,
   "rageChange": <nombre>,
   "goldChange": <nombre>,
@@ -72,343 +69,454 @@ FORMAT JSON OBLIGATOIRE :
   "event": <"combat"|"explore"|"dialogue"|"loot"|"rest"|null>,
   "enemyHp": <null ou nombre 0-100>,
   "enemyName": <null ou string>,
-  "locationChange": <null ou string>
+  "locationChange": <null ou string>,
+  "lootItem": <null ou {"name":"...","type":"weapon|armor|consumable|food","icon":"emoji","qty":1}>
 }
 
 Le texte narratif doit être en français, immersif, et suivre immédiatement le bloc JSON.`;
 
-function StatBar({ value, max, color, label }) {
-  const pct = Math.max(0, Math.min(100, (value / max) * 100));
+function StatBar({ value, max, color, label, icon }) {
+  const pct = Math.max(0, Math.min(100, (value/max)*100));
   return (
-    <div style={{ marginBottom: 6 }}>
-      <div style={{ display:"flex", justifyContent:"space-between", fontSize:10, color:"#a89070", marginBottom:2, fontFamily:"'EB Garamond',serif", letterSpacing:1 }}>
-        <span>{label}</span><span>{value}/{max}</span>
+    <div style={{ marginBottom:8 }}>
+      <div style={{ display:"flex", justifyContent:"space-between", fontSize:11, color:"#a89070", marginBottom:3 }}>
+        <span>{icon} {label}</span>
+        <span style={{ color:"#d4b070" }}>{value}<span style={{ color:"#5a3818" }}>/{max}</span></span>
       </div>
-      <div style={{ height:6, background:"#1a1208", borderRadius:3, overflow:"hidden", border:"1px solid #3a2a10" }}>
-        <div style={{ height:"100%", width:`${pct}%`, background:color, transition:"width 0.6s ease", borderRadius:3 }} />
+      <div style={{ height:7, background:"#1a1208", borderRadius:4, overflow:"hidden", border:"1px solid #2a1a08" }}>
+        <div style={{ height:"100%", width:`${pct}%`, background:color, transition:"width 0.5s ease", borderRadius:4 }} />
       </div>
     </div>
   );
 }
 
-function RollBadge({ roll, success }) {
-  if (roll === null || roll === undefined) return null;
-  const color = roll >= 80 ? "#ffd700" : roll <= 20 ? "#ff2222" : success ? "#44cc77" : "#cc4444";
-  const label = roll >= 80 ? "CRITIQUE!" : roll <= 20 ? "DÉSASTRE!" : success ? "SUCCÈS" : "ÉCHEC";
-  return (
-    <span style={{ display:"inline-flex", alignItems:"center", gap:4, background:color+"22", border:`1px solid ${color}`, color, borderRadius:4, padding:"1px 8px", fontSize:11, fontFamily:"'Cinzel',serif", fontWeight:700, marginLeft:8 }}>
-      🎲 {roll} — {label}
-    </span>
-  );
-}
+const SAVE_KEY  = "stb_save_v2";
+const APIKEY_KEY = "stb_key";
 
 function App() {
-  const [apiKey, setApiKey]   = useState(localStorage.getItem("stb_api_key") || "");
-  const [keySet, setKeySet]   = useState(!!localStorage.getItem("stb_api_key"));
-  const [char, setChar]       = useState(INITIAL_CHAR);
-  const [messages, setMessages] = useState([{
-    role:"assistant",
-    text:"Les portes de pierre s'ouvrent dans un grondement sourd. L'air chaud et fétide du donjon t'enveloppe. Tu es Bjorn — barbare, brutal, et maudit de revivre ce cauchemar. Le niveau 1 t'attend. Que fais-tu ?",
-    roll:null, success:null, enemyHp:null, enemyName:null
-  }]);
+  const [apiKey, setApiKey] = useState(localStorage.getItem(APIKEY_KEY)||"");
+  const [keySet, setKeySet] = useState(!!localStorage.getItem(APIKEY_KEY));
+  const [char, setChar]     = useState(() => {
+    try { const s = localStorage.getItem(SAVE_KEY); return s ? JSON.parse(s).char : INITIAL_CHAR; } catch{ return INITIAL_CHAR; }
+  });
+  const [messages, setMessages] = useState(() => {
+    try { const s = localStorage.getItem(SAVE_KEY); return s ? JSON.parse(s).messages : [{role:"assistant",text:"Les portes de pierre s'ouvrent dans un grondement sourd. L'air chaud et fétide du donjon t'enveloppe. Tu es Bjorn — mains nues, sans armure, sans rien. Un barbare réincarné dans ce cauchemar. Le niveau 1 commence maintenant. Que fais-tu ?",roll:null,success:null}]; } catch{ return [{role:"assistant",text:"Les portes de pierre s'ouvrent dans un grondement sourd. L'air chaud et fétide du donjon t'enveloppe. Tu es Bjorn — mains nues, sans armure, sans rien. Un barbare réincarné dans ce cauchemar. Le niveau 1 commence maintenant. Que fais-tu ?",roll:null,success:null}]; }
+  });
   const [input, setInput]   = useState("");
-  const [loading, setLoading] = useState(false);
-  const [activeTab, setTab] = useState("journal");
+  const [loading, setLoad]  = useState(false);
+  const [tab, setTab]       = useState("journal");
   const [enemy, setEnemy]   = useState(null);
   const [notif, setNotif]   = useState(null);
-  const endRef  = useRef(null);
-  const history = useRef([]);
+  const [saveFlash, setSaveFlash] = useState(false);
+  const [showNewSkill, setShowNewSkill] = useState(null);
+  const endRef   = useRef(null);
+  const history  = useRef([]);
+  const inputRef = useRef(null);
 
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior:"smooth" }); }, [messages]);
+  // ── AUTO-SAVE ──────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!keySet) return;
+    try {
+      localStorage.setItem(SAVE_KEY, JSON.stringify({ char, messages: messages.slice(-40) }));
+    } catch{}
+  }, [char, messages, keySet]);
+
+  useEffect(() => { if(tab==="journal") endRef.current?.scrollIntoView({ behavior:"smooth" }); }, [messages, tab]);
 
   const showNotif = (text, color="#ffd700") => {
-    setNotif({ text, color });
-    setTimeout(() => setNotif(null), 2500);
+    setNotif({text,color});
+    setTimeout(()=>setNotif(null), 2400);
   };
 
-  const saveKey = () => {
-    localStorage.setItem("stb_api_key", apiKey);
-    setKeySet(true);
+  const saveKey = () => { localStorage.setItem(APIKEY_KEY, apiKey); setKeySet(true); };
+
+  const manualSave = () => {
+    try {
+      localStorage.setItem(SAVE_KEY, JSON.stringify({ char, messages: messages.slice(-40) }));
+      setSaveFlash(true);
+      setTimeout(()=>setSaveFlash(false), 1500);
+      showNotif("💾 Partie sauvegardée !","#44aaff");
+    } catch{ showNotif("⚠️ Erreur de sauvegarde","#cc4444"); }
   };
 
-  const applyDelta = useCallback((delta, c0) => {
-    const c = { ...c0, stats:{...c0.stats}, inventory:[...c0.inventory] };
-    if (delta.hpChange)       c.hp       = Math.max(0, Math.min(c.hpMax,       c.hp       + delta.hpChange));
-    if (delta.staminaChange)  c.stamina  = Math.max(0, Math.min(c.staminaMax,  c.stamina  + delta.staminaChange));
-    if (delta.rageChange)     c.rage     = Math.max(0, Math.min(c.rageMax,     c.rage     + delta.rageChange));
-    if (delta.goldChange)     c.gold     = Math.max(0, c.gold + delta.goldChange);
-    if (delta.xpGain) {
-      c.xp += delta.xpGain;
+  const resetGame = () => {
+    if (!window.confirm("Recommencer depuis le début ?")) return;
+    localStorage.removeItem(SAVE_KEY);
+    setChar(INITIAL_CHAR);
+    setMessages([{role:"assistant",text:"Les portes de pierre s'ouvrent dans un grondement sourd. L'air chaud et fétide du donjon t'enveloppe. Tu es Bjorn — mains nues, sans armure, sans rien. Un barbare réincarné dans ce cauchemar. Le niveau 1 commence maintenant. Que fais-tu ?",roll:null,success:null}]);
+    setEnemy(null);
+    history.current = [];
+    showNotif("🔄 Nouvelle partie","#c8862a");
+  };
+
+  // ── LEVEL UP avec déblocage de compétences ─────────────────────────────────
+  const applyDelta = useCallback((d, c0) => {
+    const c = {...c0, stats:{...c0.stats}, inventory:[...c0.inventory], skills:[...c0.skills]};
+    if (d.hpChange)      c.hp      = Math.max(0,Math.min(c.hpMax,      c.hp      + d.hpChange));
+    if (d.staminaChange) c.stamina = Math.max(0,Math.min(c.staminaMax, c.stamina + d.staminaChange));
+    if (d.rageChange)    c.rage    = Math.max(0,Math.min(c.rageMax,    c.rage    + d.rageChange));
+    if (d.goldChange)    c.gold    = Math.max(0, c.gold + d.goldChange);
+
+    // Loot
+    if (d.lootItem) {
+      const existing = c.inventory.find(i=>i.name===d.lootItem.name);
+      if (existing) { c.inventory = c.inventory.map(i=>i.name===d.lootItem.name?{...i,qty:i.qty+(d.lootItem.qty||1)}:i); }
+      else { c.inventory = [...c.inventory, {...d.lootItem, qty:d.lootItem.qty||1}]; }
+    }
+
+    if (d.xpGain) {
+      c.xp += d.xpGain;
       if (c.xp >= c.xpNext) {
-        c.level++; c.xp -= c.xpNext; c.xpNext = Math.floor(c.xpNext * 1.6);
-        c.hpMax += 15; c.hp = c.hpMax; c.stats.FOR += 1; c.stats.END += 1;
-        showNotif(`⚔️ NIVEAU ${c.level} ! +15 PV, +1 FOR, +1 END`, "#ffd700");
+        c.level++; c.xp -= c.xpNext; c.xpNext = Math.floor(c.xpNext*1.6);
+        c.hpMax += 12; c.hp = Math.min(c.hpMax, c.hp+12);
+        c.staminaMax += 8; c.stamina = Math.min(c.staminaMax, c.stamina+8);
+        c.stats.FOR += 1; c.stats.END += 1;
+        // Débloquer compétences du nouveau niveau
+        const newSkills = ALL_SKILLS.filter(sk => sk.unlockLv === c.level && !c.skills.find(s=>s.id===sk.id));
+        if (newSkills.length > 0) {
+          c.skills = [...c.skills, ...newSkills];
+          setShowNewSkill(newSkills[0]);
+          setTimeout(()=>setShowNewSkill(null), 4000);
+        }
+        showNotif("⚔️ NIVEAU "+c.level+" ! +12 PV +8 END +1 FOR +1 END","#ffd700");
       }
     }
-    if (delta.locationChange) c.location = delta.locationChange;
+    if (d.locationChange) c.location = d.locationChange;
     return c;
-  }, []);
+  },[]);
 
-  const sendMessage = async () => {
+  const send = async () => {
     if (!input.trim() || loading) return;
-    const userText = input.trim();
-    setInput(""); setLoading(true);
-    setMessages(prev => [...prev, { role:"user", text:userText }]);
-    history.current.push({ role:"user", content:userText });
+    const txt = input.trim(); setInput(""); setLoad(true);
+    setMessages(p=>[...p,{role:"user",text:txt}]);
+    history.current.push({role:"user",content:txt});
 
-    const ctx = `[ÉTAT: PV ${char.hp}/${char.hpMax} | END ${char.stamina}/${char.staminaMax} | RAGE ${char.rage}/${char.rageMax} | Or:${char.gold} | ${char.location}${enemy ? ` | COMBAT vs ${enemy.name} (PV:${enemy.hp}/100)` : ""}]`;
+    const inv = char.inventory.length>0 ? char.inventory.map(i=>i.icon+i.name+"×"+i.qty).join(", ") : "AUCUN";
+    const ctx = "[PV:"+char.hp+"/"+char.hpMax+" END:"+char.stamina+"/"+char.staminaMax+" RAGE:"+char.rage+"/"+char.rageMax+" Or:"+char.gold+" Nv:"+char.level+" | Lieu:"+char.location+" | Inventaire:"+inv+(enemy?" | COMBAT vs "+enemy.name+" (PV:"+enemy.hp+"/100)":"")+"]";
 
     try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
+      const res = await fetch("https://api.anthropic.com/v1/messages",{
         method:"POST",
-        headers:{ "Content-Type":"application/json", "x-api-key": apiKey, "anthropic-version":"2023-06-01", "anthropic-dangerous-direct-browser-access":"true" },
-        body: JSON.stringify({
-          model:"claude-sonnet-4-20250514", max_tokens:600,
-          system: SYSTEM_PROMPT,
-          messages:[ ...history.current.slice(-12), { role:"user", content: ctx + "\n\nAction: " + userText } ]
-        })
+        headers:{"Content-Type":"application/json","x-api-key":apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
+        body:JSON.stringify({ model:"claude-sonnet-4-20250514", max_tokens:700, system:SYSTEM_PROMPT,
+          messages:[...history.current.slice(-14),{role:"user",content:ctx+"\n\nAction: "+txt}] })
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error.message);
-      const raw = data.content?.map(b => b.text||"").join("\n") || "";
-
-      let delta = { roll:null, success:null, hpChange:0, staminaChange:0, rageChange:0, goldChange:0, xpGain:0, event:null, enemyHp:null, enemyName:null, locationChange:null };
+      const raw = data.content?.map(b=>b.text||"").join("\n")||"";
+      let delta = {roll:null,success:null,hpChange:0,staminaChange:0,rageChange:0,goldChange:0,xpGain:0,event:null,enemyHp:null,enemyName:null,locationChange:null,lootItem:null};
       let narrative = raw;
       const jm = raw.match(/```json\s*([\s\S]*?)```/);
-      if (jm) { try { delta = {...delta,...JSON.parse(jm[1])}; } catch{} narrative = raw.replace(/```json[\s\S]*?```/,"").trim(); }
+      if (jm) { try{delta={...delta,...JSON.parse(jm[1])}}catch{} narrative=raw.replace(/```json[\s\S]*?```/,"").trim(); }
 
-      if (delta.event==="combat" && delta.enemyName) setEnemy({ name:delta.enemyName, hp:delta.enemyHp??100 });
-      else if (delta.enemyHp !== null && enemy) setEnemy(prev => prev ? {...prev, hp:delta.enemyHp} : null);
-      if (delta.enemyHp === 0) { setEnemy(null); showNotif("☠️ Ennemi vaincu !", "#cc4444"); }
-      if (delta.hpChange < 0) showNotif(`💔 ${delta.hpChange} PV`, "#cc2222");
-      if (delta.hpChange > 0) showNotif(`❤️ +${delta.hpChange} PV`, "#44cc77");
-      if (delta.goldChange > 0) showNotif(`💰 +${delta.goldChange} or`, "#ffd700");
-      if (delta.xpGain > 0) showNotif(`✨ +${delta.xpGain} XP`, "#aaddff");
+      if (delta.event==="combat"&&delta.enemyName) setEnemy({name:delta.enemyName,hp:delta.enemyHp??100});
+      else if (delta.enemyHp!==null&&enemy) setEnemy(p=>p?{...p,hp:delta.enemyHp}:null);
+      if (delta.enemyHp===0){setEnemy(null);showNotif("☠️ Ennemi vaincu !","#cc4444");}
+      if (delta.hpChange<0) showNotif("💔 "+delta.hpChange+" PV","#cc2222");
+      if (delta.hpChange>0) showNotif("❤️ +"+delta.hpChange+" PV","#44cc77");
+      if (delta.goldChange>0) showNotif("💰 +"+delta.goldChange+" or","#ffd700");
+      if (delta.xpGain>0) showNotif("✨ +"+delta.xpGain+" XP","#aaddff");
+      if (delta.lootItem) showNotif("📦 Obtenu : "+delta.lootItem.icon+delta.lootItem.name,"#c8a040");
 
-      setChar(prev => applyDelta(delta, prev));
-      setMessages(prev => [...prev, { role:"assistant", text:narrative, roll:delta.roll, success:delta.success, enemyHp:delta.enemyHp, enemyName:delta.enemyName }]);
-      history.current.push({ role:"assistant", content:narrative });
+      setChar(p=>applyDelta(delta,p));
+      const rc = delta.roll>=80?"#ffd700":delta.roll<=20?"#ff3333":delta.success?"#44cc77":"#cc4444";
+      const rl = delta.roll>=80?"CRITIQUE!":delta.roll<=20?"DÉSASTRE!":delta.success?"SUCCÈS":"ÉCHEC";
+      setMessages(p=>[...p,{role:"assistant",text:narrative,roll:delta.roll,success:delta.success,rc,rl}]);
+      history.current.push({role:"assistant",content:narrative});
+      setTab("journal");
     } catch(e) {
-      setMessages(prev => [...prev, { role:"assistant", text:`⚠️ Erreur : ${e.message}`, roll:null }]);
+      setMessages(p=>[...p,{role:"assistant",text:"⚠️ Erreur : "+e.message,roll:null}]);
     }
-    setLoading(false);
+    setLoad(false);
   };
 
-  const useSkill = (sk) => {
-    if (sk.type==="rage"    && char.rage    < sk.cost) { showNotif("Pas assez de Rage !", "#cc4444"); return; }
-    if (sk.type==="stamina" && char.stamina < sk.cost) { showNotif("Pas assez d'Endurance !", "#cc4444"); return; }
-    setInput(`J'utilise ${sk.name} — ${sk.desc}`);
+  const useSkill = sk => {
+    if (sk.type==="rage"&&char.rage<sk.cost){showNotif("Pas assez de Rage !","#cc4444");return;}
+    if (sk.type==="stamina"&&char.stamina<sk.cost){showNotif("Pas assez d'Endurance !","#cc4444");return;}
+    setInput("J'utilise "+sk.name+" — "+sk.desc);
+    setTab("journal");
   };
 
   const usePotion = () => {
-    const pot = char.inventory.find(i => i.name==="Potion de soin" && i.qty>0);
-    if (!pot) { showNotif("Plus de potions !", "#cc4444"); return; }
-    setChar(prev => ({ ...prev, hp:Math.min(prev.hpMax, prev.hp+40), inventory:prev.inventory.map(i => i.name==="Potion de soin" ? {...i,qty:i.qty-1} : i) }));
-    showNotif("❤️ +40 PV (Potion)", "#44cc77");
+    const pot = char.inventory.find(i=>i.name==="Potion de soin"&&i.qty>0);
+    if (!pot){showNotif("Pas de potion de soin !","#cc4444");return;}
+    setChar(p=>({...p,hp:Math.min(p.hpMax,p.hp+40),inventory:p.inventory.map(i=>i.name==="Potion de soin"?{...i,qty:i.qty-1}:i)}));
+    showNotif("❤️ +40 PV (Potion)","#44cc77");
   };
 
-  // ── API KEY SCREEN ───────────────────────────────────────────────────────────
+  // ── ÉCRAN CLÉ API ────────────────────────────────────────────────────────────
   if (!keySet) return (
-    <div style={{ minHeight:"100vh", background:"#0a0704", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'EB Garamond',serif" }}>
-      <div style={{ background:"#0e0a02", border:"1px solid #3a2010", borderRadius:12, padding:"40px 48px", maxWidth:440, width:"90%", textAlign:"center" }}>
-        <div style={{ fontFamily:"'Cinzel Decorative',serif", fontSize:20, color:"#c8862a", letterSpacing:2, marginBottom:8 }}>⚔ SURVIVING THE DUNGEON</div>
-        <div style={{ fontSize:11, color:"#7a5030", letterSpacing:3, marginBottom:28 }}>AS A BARBARIAN</div>
-        <div style={{ fontSize:13, color:"#a89070", marginBottom:6, textAlign:"left" }}>Clé API Anthropic :</div>
-        <input
-          type="password"
-          value={apiKey}
-          onChange={e => setApiKey(e.target.value)}
-          onKeyDown={e => e.key==="Enter" && apiKey && saveKey()}
+    <div style={{height:"100%",background:"#0a0704",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24,fontFamily:"'EB Garamond',serif"}}>
+      <div style={{fontSize:22,fontFamily:"'Cinzel',serif",color:"#c8862a",letterSpacing:2,textAlign:"center",marginBottom:6}}>⚔ SURVIVING<br/>THE DUNGEON</div>
+      <div style={{fontSize:11,color:"#7a5030",letterSpacing:3,marginBottom:32,textAlign:"center"}}>AS A BARBARIAN</div>
+      <div style={{width:"100%",maxWidth:360}}>
+        <div style={{fontSize:13,color:"#a89070",marginBottom:8}}>Clé API Anthropic :</div>
+        <input type="password" value={apiKey} onChange={e=>setApiKey(e.target.value)}
+          onKeyDown={e=>e.key==="Enter"&&apiKey&&saveKey()}
           placeholder="sk-ant-..."
-          style={{ width:"100%", background:"#120a02", border:"1px solid #3a2010", borderRadius:6, color:"#d4b896", padding:"10px 14px", fontSize:13, fontFamily:"'EB Garamond',serif", marginBottom:16 }}
-        />
-        <div style={{ fontSize:11, color:"#5a3818", marginBottom:20 }}>
-          Obtiens ta clé sur <a href="https://console.anthropic.com" target="_blank" style={{ color:"#c8862a" }}>console.anthropic.com</a>.<br/>
-          Elle est stockée uniquement dans ton navigateur.
+          style={{width:"100%",background:"#120a02",border:"1px solid #3a2010",borderRadius:8,color:"#d4b896",padding:"12px 14px",fontSize:14,marginBottom:12,outline:"none"}} />
+        <div style={{fontSize:11,color:"#5a3818",marginBottom:20,lineHeight:1.7}}>
+          Obtiens ta clé sur <a href="https://console.anthropic.com" target="_blank" style={{color:"#c8862a"}}>console.anthropic.com</a> → API Keys.<br/>
+          Stockée uniquement dans ton navigateur.
         </div>
-        <button
-          onClick={saveKey}
-          disabled={!apiKey}
-          style={{ background:"linear-gradient(135deg,#8a4a10,#c8762a)", border:"1px solid #c8762a", borderRadius:8, color:"#ffd4a0", padding:"10px 32px", cursor:"pointer", fontFamily:"'Cinzel',serif", fontSize:13, letterSpacing:2, width:"100%" }}
-        >
+        <button onClick={saveKey} disabled={!apiKey}
+          style={{width:"100%",background:apiKey?"linear-gradient(135deg,#8a4a10,#c8762a)":"#1a0e04",border:"1px solid #c8762a",borderRadius:10,color:"#ffd4a0",padding:"13px",cursor:"pointer",fontFamily:"'Cinzel',serif",fontSize:14,letterSpacing:2}}>
           ENTRER DANS LE DONJON
         </button>
       </div>
     </div>
   );
 
-  // ── STYLES ───────────────────────────────────────────────────────────────────
-  const S = {
-    app:      { minHeight:"100vh", background:"#0a0704", fontFamily:"'EB Garamond',Georgia,serif", backgroundImage:"radial-gradient(ellipse at 20% 50%,#1a0f04 0%,transparent 60%)", display:"flex", flexDirection:"column", alignItems:"center", color:"#d4b896" },
-    header:   { width:"100%", maxWidth:920, padding:"14px 20px 0", display:"flex", alignItems:"center", gap:12, borderBottom:"1px solid #3a2810" },
-    title:    { fontFamily:"'Cinzel Decorative','Cinzel',serif", fontSize:17, color:"#c8862a", letterSpacing:2, textShadow:"0 0 20px #c8862a55" },
-    sub:      { fontSize:10, color:"#7a5030", letterSpacing:3, marginTop:2 },
-    main:     { width:"100%", maxWidth:920, display:"flex", flex:1 },
-    left:     { width:210, flexShrink:0, padding:"12px", borderRight:"1px solid #2a1a08", display:"flex", flexDirection:"column", gap:8 },
-    center:   { flex:1, display:"flex", flexDirection:"column", minWidth:0 },
-    right:    { width:190, flexShrink:0, padding:"12px", borderLeft:"1px solid #2a1a08", display:"flex", flexDirection:"column", gap:6 },
-    secTitle: { fontSize:9, color:"#5a3818", letterSpacing:3, textTransform:"uppercase", marginTop:6, marginBottom:3 },
-    statGrid: { display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:"4px 6px" },
-    statItem: { textAlign:"center", background:"#120a02", border:"1px solid #2a1808", borderRadius:4, padding:"4px 2px" },
-    statVal:  { fontSize:15, color:"#e8c070", fontFamily:"'Cinzel',serif", display:"block" },
-    statLbl:  { fontSize:9, color:"#6a4828", letterSpacing:1 },
-    locBox:   { background:"#0e0802", border:"1px solid #2a1808", borderRadius:6, padding:"5px 8px", fontSize:11, color:"#a87848", fontStyle:"italic" },
-    tabs:     { display:"flex", borderBottom:"1px solid #2a1808", padding:"0 12px" },
-    tab:      (a) => ({ padding:"7px 14px", fontSize:10, letterSpacing:2, cursor:"pointer", color:a?"#c8862a":"#5a3818", background:"transparent", border:"none", borderBottom:a?"2px solid #c8862a":"2px solid transparent", fontFamily:"'Cinzel',serif" }),
-    journal:  { flex:1, overflowY:"auto", padding:"10px 14px", display:"flex", flexDirection:"column", gap:8, maxHeight:"calc(100vh - 210px)" },
-    msgUser:  { alignSelf:"flex-end", background:"#1a0e04", border:"1px solid #3a2010", borderRadius:"8px 8px 2px 8px", padding:"7px 11px", maxWidth:"75%", fontSize:13, color:"#c89060" },
-    msgAI:    { alignSelf:"flex-start", background:"#0e0a04", border:"1px solid #2a1808", borderRadius:"8px 8px 8px 2px", padding:"9px 13px", maxWidth:"85%", fontSize:13, lineHeight:1.7, color:"#c4a880" },
-    inputRow: { display:"flex", gap:8, padding:"9px 11px", borderTop:"1px solid #2a1808", background:"#0a0702" },
-    input:    { flex:1, background:"#120a02", border:"1px solid #3a2010", borderRadius:6, color:"#d4b896", padding:"7px 11px", fontSize:13, fontFamily:"'EB Garamond',serif" },
-    sendBtn:  (l) => ({ background:l?"#1a0e04":"linear-gradient(135deg,#8a4a10,#c8762a)", border:"1px solid #c8762a", borderRadius:6, color:"#ffd4a0", padding:"7px 14px", cursor:"pointer", fontFamily:"'Cinzel',serif", fontSize:10, letterSpacing:1 }),
-    skillBtn: (d) => ({ background:d?"#0e0802":"#120a02", border:`1px solid ${d?"#2a1808":"#4a2c10"}`, borderRadius:6, padding:"5px 7px", cursor:d?"not-allowed":"pointer", color:d?"#3a2808":"#c89060", fontSize:11, fontFamily:"'EB Garamond',serif", textAlign:"left", width:"100%" }),
-    enemyBox: { background:"#1a0404", border:"1px solid #5a1010", borderRadius:8, padding:"7px 9px" },
-    notif:    (c) => ({ position:"fixed", top:72, left:"50%", transform:"translateX(-50%)", background:"#0e0802", border:`1px solid ${c}`, borderRadius:8, padding:"6px 18px", fontFamily:"'Cinzel',serif", fontSize:12, letterSpacing:1, zIndex:999, pointerEvents:"none", color:c, animation:"fadeNotif 2.5s ease forwards" }),
-    quickBtn: (bc,tc) => ({ background:"#0e0a02", border:`1px solid ${bc}`, borderRadius:6, color:tc, padding:"5px 7px", cursor:"pointer", fontSize:11, fontFamily:"'EB Garamond',serif", width:"100%" }),
-  };
-
+  // ── UI PRINCIPALE ────────────────────────────────────────────────────────────
   return (
-    <div style={S.app}>
-      {notif && <div style={S.notif(notif.color)}>{notif.text}</div>}
+    <div style={{height:"100%",display:"flex",flexDirection:"column",background:"#0a0704",fontFamily:"'EB Garamond',serif",color:"#d4b896",overflow:"hidden"}}>
 
-      <div style={S.header}>
-        <div>
-          <div style={S.title}>⚔ SURVIVING THE DUNGEON</div>
-          <div style={S.sub}>AS A BARBARIAN — TEXT MMO RPG</div>
+      {/* NOTIF */}
+      {notif && <div style={{position:"fixed",top:16,left:"50%",transform:"translateX(-50%)",background:"#0e0802",border:"1px solid "+notif.color,borderRadius:20,padding:"6px 18px",fontFamily:"'Cinzel',serif",fontSize:13,color:notif.color,zIndex:999,pointerEvents:"none",whiteSpace:"nowrap",animation:"fadeNotif 2.4s ease forwards"}}>{notif.text}</div>}
+
+      {/* NOUVELLE COMPÉTENCE */}
+      {showNewSkill && (
+        <div style={{position:"fixed",bottom:80,left:"50%",transform:"translateX(-50%)",background:"#1a0e02",border:"2px solid #c8862a",borderRadius:12,padding:"12px 20px",zIndex:998,animation:"slideIn 0.4s ease",maxWidth:"80%",textAlign:"center"}}>
+          <div style={{fontSize:10,color:"#c8862a",fontFamily:"'Cinzel',serif",letterSpacing:2,marginBottom:4}}>✦ COMPÉTENCE DÉBLOQUÉE</div>
+          <div style={{fontSize:15,color:"#e8d080",fontFamily:"'Cinzel',serif"}}>{showNewSkill.name}</div>
+          <div style={{fontSize:11,color:"#7a5030",marginTop:3}}>{showNewSkill.desc}</div>
         </div>
-        <div style={{ marginLeft:"auto", display:"flex", gap:6, alignItems:"center" }}>
-          <span style={{ fontSize:10, color:"#5a3818", fontFamily:"'Cinzel',serif" }}>ÉTAGE</span>
-          <span style={{ fontFamily:"'Cinzel',serif", fontSize:22, color:"#c8862a" }}>{char.floor}</span>
+      )}
+
+      {/* TOP BAR */}
+      <div style={{background:"#0e0a02",borderBottom:"1px solid #2a1808",padding:"8px 14px",flexShrink:0}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+          <span style={{fontFamily:"'Cinzel',serif",fontSize:15,color:"#e8a84a"}}>{char.name}</span>
+          <span style={{background:"#2a1608",border:"1px solid #c8862a",color:"#c8862a",borderRadius:4,padding:"0 7px",fontSize:10,fontFamily:"'Cinzel',serif"}}>Nv.{char.level}</span>
+          {enemy && <span style={{background:"#2a0404",border:"1px solid #cc3333",color:"#ee4444",borderRadius:4,padding:"0 7px",fontSize:10,fontFamily:"'Cinzel',serif"}}>⚔ COMBAT</span>}
+          <span style={{marginLeft:"auto",fontSize:12,color:"#aa8822"}}>💰{char.gold}</span>
+          {/* BOUTON SAUVEGARDE */}
+          <button onClick={manualSave} style={{background:saveFlash?"#0a2010":"#0e0a02",border:"1px solid "+(saveFlash?"#44aa66":"#2a1808"),borderRadius:6,color:saveFlash?"#44aa66":"#4a2808",padding:"3px 8px",cursor:"pointer",fontSize:11,fontFamily:"'Cinzel',serif",transition:"all 0.3s"}}>
+            {saveFlash?"✓":"💾"}
+          </button>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
+          {[
+            {val:char.hp,max:char.hpMax,color:"hsl("+(char.hp/char.hpMax*120)+",80%,30%)",icon:"❤",label:char.hp+"/"+char.hpMax},
+            {val:char.stamina,max:char.staminaMax,color:"#1a77bb",icon:"⚡",label:char.stamina+"/"+char.staminaMax},
+            {val:char.rage,max:char.rageMax,color:"#cc5500",icon:"🔥",label:char.rage+"/"+char.rageMax},
+          ].map((b,i)=>(
+            <div key={i}>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:9,color:"#5a3818",marginBottom:2}}>
+                <span>{b.icon}</span><span>{b.label}</span>
+              </div>
+              <div style={{height:5,background:"#1a1208",borderRadius:3,overflow:"hidden"}}>
+                <div style={{height:"100%",width:Math.max(0,Math.min(100,(b.val/b.max)*100))+"%",background:b.color,transition:"width 0.4s",borderRadius:3}} />
+              </div>
+            </div>
+          ))}
+        </div>
+        {/* XP BAR */}
+        <div style={{marginTop:5}}>
+          <div style={{height:3,background:"#150a18",borderRadius:2,overflow:"hidden"}}>
+            <div style={{height:"100%",width:Math.min(100,(char.xp/char.xpNext)*100)+"%",background:"#8844cc",transition:"width 0.5s",borderRadius:2}} />
+          </div>
+          <div style={{fontSize:8,color:"#4a2868",marginTop:1,textAlign:"right"}}>XP {char.xp}/{char.xpNext}</div>
         </div>
       </div>
 
-      <div style={S.main}>
-        {/* LEFT */}
-        <div style={S.left}>
-          <div>
-            <span style={{ fontFamily:"'Cinzel',serif", fontSize:14, color:"#e8a84a" }}>{char.name}</span>
-            <span style={{ display:"inline-block", background:"#2a1608", border:"1px solid #c8862a", color:"#c8862a", borderRadius:3, padding:"0 6px", fontSize:10, fontFamily:"'Cinzel',serif", marginLeft:6 }}>Nv.{char.level}</span>
-            <div style={{ fontSize:10, color:"#7a5030", letterSpacing:2, textTransform:"uppercase", marginTop:2 }}>☠ {char.class}</div>
-          </div>
-          <div>
-            <StatBar value={char.hp}      max={char.hpMax}      color="#cc3333" label="❤ VIE" />
-            <StatBar value={char.stamina} max={char.staminaMax} color="#2288cc" label="⚡ ENDURANCE" />
-            <StatBar value={char.rage}    max={char.rageMax}    color="#dd6611" label="🔥 RAGE" />
-            <StatBar value={char.xp}      max={char.xpNext}     color="#8844cc" label="✦ XP" />
-          </div>
-          <div style={S.secTitle}>▸ Attributs</div>
-          <div style={S.statGrid}>
-            {Object.entries(char.stats).map(([k,v]) => (
-              <div key={k} style={S.statItem}><span style={S.statVal}>{v}</span><span style={S.statLbl}>{k}</span></div>
-            ))}
-          </div>
-          <div style={S.secTitle}>▸ Position</div>
-          <div style={S.locBox}>📍 {char.location}</div>
-          <div style={S.secTitle}>▸ Or</div>
-          <div style={{ fontSize:14, color:"#ffd060", fontFamily:"'Cinzel',serif" }}>💰 {char.gold}</div>
-          <div style={S.secTitle}>▸ Actions</div>
-          <button onClick={usePotion}  style={S.quickBtn("#3a5010","#88cc44")}>🧪 Potion ×{char.inventory.find(i=>i.name==="Potion de soin")?.qty||0}</button>
-          <button onClick={()=>setInput("Je cherche un endroit pour me reposer.")} style={S.quickBtn("#103050","#4488aa")}>🌙 Se reposer</button>
-          <button onClick={()=>setInput("J'explore prudemment les alentours.")}    style={S.quickBtn("#3a3010","#aa9944")}>🗺 Explorer</button>
-        </div>
+      {/* CONTENT */}
+      <div style={{flex:1,overflow:"hidden",display:"flex",flexDirection:"column",minHeight:0}}>
 
-        {/* CENTER */}
-        <div style={S.center}>
-          <div style={S.tabs}>
-            {["journal","inventaire"].map(t => (
-              <button key={t} style={S.tab(activeTab===t)} onClick={()=>setTab(t)}>
-                {t==="journal" ? "📜 Journal" : "🎒 Inventaire"}
-              </button>
-            ))}
-          </div>
-
-          {activeTab==="journal" ? (
-            <>
-              <div style={S.journal}>
-                {messages.map((m,i) => (
-                  <div key={i} style={m.role==="user" ? S.msgUser : S.msgAI}>
-                    {m.role==="assistant" && (
-                      <div style={{ fontSize:9, color:"#5a3818", marginBottom:3, letterSpacing:2 }}>
-                        ⚔ MAÎTRE DU DONJON <RollBadge roll={m.roll} success={m.success} />
-                      </div>
-                    )}
-                    <div style={{ whiteSpace:"pre-wrap" }}>{m.text}</div>
-                    {m.enemyName && m.enemyHp > 0 && <div style={{ marginTop:5, fontSize:10, color:"#cc4444" }}>☠ {m.enemyName} — PV : {m.enemyHp}/100</div>}
-                  </div>
-                ))}
-                {loading && (
-                  <div style={{ ...S.msgAI, animation:"pulse 1s infinite" }}>
-                    <div style={{ fontSize:9, color:"#5a3818", marginBottom:3 }}>⚔ MAÎTRE DU DONJON</div>
-                    <span style={{ color:"#5a3818" }}>Le donjon murmure...</span>
+        {/* ── JOURNAL ── */}
+        {tab==="journal" && (
+          <div style={{flex:1,overflowY:"auto",padding:"10px 12px",display:"flex",flexDirection:"column",gap:10}}>
+            {messages.map((m,i)=>(
+              <div key={i} style={{
+                alignSelf:m.role==="user"?"flex-end":"flex-start",
+                background:m.role==="user"?"#1a0e04":"#0e0a02",
+                border:"1px solid "+(m.role==="user"?"#3a2010":"#221408"),
+                borderRadius:m.role==="user"?"12px 12px 3px 12px":"12px 12px 12px 3px",
+                padding:"10px 13px",maxWidth:"88%",fontSize:14,lineHeight:1.85,color:m.role==="user"?"#c89060":"#c4a880"
+              }}>
+                {m.role==="assistant"&&(
+                  <div style={{fontSize:9,color:"#5a3818",marginBottom:5,letterSpacing:2,display:"flex",alignItems:"center",flexWrap:"wrap",gap:6}}>
+                    ⚔ MAÎTRE DU DONJON
+                    {m.roll&&<span style={{background:m.rc+"22",border:"1px solid "+m.rc,color:m.rc,borderRadius:4,padding:"0 6px",fontSize:9}}>🎲{m.roll} — {m.rl}</span>}
                   </div>
                 )}
-                <div ref={endRef} />
+                <div style={{whiteSpace:"pre-wrap"}}>{m.text}</div>
               </div>
-              <div style={S.inputRow}>
-                <input style={S.input} value={input} onChange={e=>setInput(e.target.value)}
-                  onKeyDown={e=>e.key==="Enter"&&!e.shiftKey&&sendMessage()}
-                  placeholder="Que fais-tu, barbare ?" disabled={loading} />
-                <button style={S.sendBtn(loading)} onClick={sendMessage} disabled={loading}>{loading?"...":"AGIR"}</button>
+            ))}
+            {loading&&(
+              <div style={{alignSelf:"flex-start",background:"#0e0a02",border:"1px solid #221408",borderRadius:"12px 12px 12px 3px",padding:"10px 13px",animation:"pulse 1s infinite"}}>
+                <div style={{fontSize:9,color:"#5a3818",marginBottom:4,letterSpacing:2}}>⚔ MAÎTRE DU DONJON</div>
+                <span style={{color:"#3a2808"}}>Le donjon murmure...</span>
               </div>
-            </>
-          ) : (
-            <div style={{ padding:"12px 14px", overflowY:"auto" }}>
-              <div style={S.secTitle}>▸ Inventaire</div>
-              <div style={{ display:"flex", flexDirection:"column", gap:5, marginTop:6 }}>
-                {char.inventory.map((item,i) => (
-                  <div key={i} style={{ background:"#0e0a02", border:"1px solid #2a1808", borderRadius:8, padding:"7px 11px", display:"flex", alignItems:"center", gap:9 }}>
-                    <span style={{ fontSize:18 }}>{item.icon}</span>
+            )}
+            <div ref={endRef} />
+          </div>
+        )}
+
+        {/* ── PERSONNAGE ── */}
+        {tab==="perso" && (
+          <div style={{flex:1,overflowY:"auto",padding:"14px"}}>
+            <div style={{fontFamily:"'Cinzel',serif",fontSize:11,color:"#5a3818",letterSpacing:3,marginBottom:10}}>▸ STATISTIQUES</div>
+            <StatBar value={char.hp}      max={char.hpMax}      color="#cc3333" label="VIE"        icon="❤" />
+            <StatBar value={char.stamina} max={char.staminaMax} color="#2288cc" label="ENDURANCE"  icon="⚡" />
+            <StatBar value={char.rage}    max={char.rageMax}    color="#dd6611" label="RAGE"        icon="🔥" />
+            <StatBar value={char.xp}      max={char.xpNext}     color="#8844cc" label="EXPÉRIENCE" icon="✦" />
+
+            <div style={{fontFamily:"'Cinzel',serif",fontSize:11,color:"#5a3818",letterSpacing:3,margin:"16px 0 10px"}}>▸ ATTRIBUTS</div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginBottom:16}}>
+              {Object.entries(char.stats).map(([k,v])=>(
+                <div key={k} style={{background:"#120a02",border:"1px solid #2a1808",borderRadius:8,padding:"10px 6px",textAlign:"center"}}>
+                  <div style={{fontSize:22,color:"#e8c070",fontFamily:"'Cinzel',serif"}}>{v}</div>
+                  <div style={{fontSize:10,color:"#6a4828",letterSpacing:1}}>{k}</div>
+                </div>
+              ))}
+            </div>
+
+            <div style={{fontFamily:"'Cinzel',serif",fontSize:11,color:"#5a3818",letterSpacing:3,marginBottom:10}}>▸ INVENTAIRE</div>
+            {char.inventory.length===0 ? (
+              <div style={{background:"#0a0804",border:"1px dashed #2a1808",borderRadius:8,padding:"16px",textAlign:"center",color:"#3a2808",fontSize:13,fontStyle:"italic",marginBottom:14}}>
+                Aucun objet — explore le donjon pour trouver de l'équipement.
+              </div>
+            ) : (
+              <div style={{display:"flex",flexDirection:"column",gap:7,marginBottom:14}}>
+                {char.inventory.map((it,i)=>(
+                  <div key={i} style={{background:"#0e0a02",border:"1px solid #2a1808",borderRadius:10,padding:"9px 12px",display:"flex",alignItems:"center",gap:10}}>
+                    <span style={{fontSize:22}}>{it.icon}</span>
                     <div>
-                      <div style={{ fontSize:13, color:"#d4a870" }}>{item.name}</div>
-                      <div style={{ fontSize:9, color:"#5a3818", textTransform:"uppercase", letterSpacing:1 }}>{item.type} — ×{item.qty}</div>
+                      <div style={{fontSize:14,color:"#d4a870"}}>{it.name}</div>
+                      <div style={{fontSize:10,color:"#5a3818",letterSpacing:1}}>{(it.type||"").toUpperCase()} — ×{it.qty}</div>
                     </div>
                   </div>
                 ))}
               </div>
+            )}
+
+            <div style={{background:"#0e0802",border:"1px solid #2a1808",borderRadius:8,padding:"10px 12px",fontSize:13,color:"#a87848",fontStyle:"italic",marginBottom:14}}>
+              📍 {char.location} — Étage {char.floor}
             </div>
-          )}
-        </div>
 
-        {/* RIGHT */}
-        <div style={S.right}>
-          <div style={S.secTitle}>▸ Compétences</div>
-          {char.skills.map((sk,i) => {
-            const dis = sk.type==="rage" ? char.rage<sk.cost : char.stamina<sk.cost;
-            return (
-              <button key={i} style={S.skillBtn(dis)} onClick={()=>useSkill(sk)}>
-                <div style={{ fontWeight:600, fontSize:11 }}>
-                  {sk.name}
-                  <span style={{ float:"right", color:sk.type==="rage"?"#dd6611":"#2288cc" }}>-{sk.cost}</span>
+            {/* COMPÉTENCES À VENIR */}
+            <div style={{fontFamily:"'Cinzel',serif",fontSize:11,color:"#5a3818",letterSpacing:3,marginBottom:8}}>▸ COMPÉTENCES À DÉBLOQUER</div>
+            <div style={{display:"flex",flexDirection:"column",gap:5,marginBottom:14}}>
+              {ALL_SKILLS.filter(sk=>!char.skills.find(s=>s.id===sk.id)).map(sk=>(
+                <div key={sk.id} style={{background:"#0a0804",border:"1px dashed #2a1808",borderRadius:8,padding:"8px 12px",opacity:0.6}}>
+                  <div style={{display:"flex",justifyContent:"space-between"}}>
+                    <span style={{fontSize:12,color:"#5a3818",fontFamily:"'Cinzel',serif"}}>{sk.name}</span>
+                    <span style={{fontSize:10,color:"#3a2808"}}>Nv.{sk.unlockLv}</span>
+                  </div>
+                  <div style={{fontSize:10,color:"#3a2808",marginTop:2}}>{sk.desc}</div>
                 </div>
-                <div style={{ fontSize:9, color:"#6a4828", marginTop:2 }}>{sk.desc}</div>
-                {sk.dmg!=="—" && <div style={{ fontSize:9, color:"#aa6622", marginTop:1 }}>🗡 {sk.dmg}</div>}
+              ))}
+            </div>
+
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={manualSave}
+                style={{flex:1,background:"#04100a",border:"1px solid #1a4020",borderRadius:8,color:"#44aa66",padding:"10px",cursor:"pointer",fontSize:12,fontFamily:"'Cinzel',serif",letterSpacing:1}}>
+                💾 Sauvegarder
               </button>
-            );
-          })}
-
-          {enemy && (
-            <>
-              <div style={S.secTitle}>▸ Combat</div>
-              <div style={S.enemyBox}>
-                <div style={{ fontSize:11, color:"#e84040", fontFamily:"'Cinzel',serif", marginBottom:5 }}>☠ {enemy.name}</div>
-                <StatBar value={enemy.hp} max={100} color="#cc2222" label="PV ENNEMI" />
-                <button onClick={()=>setInput(`J'attaque ${enemy.name} avec ma hache !`)}    style={{ ...S.skillBtn(false), marginTop:5, textAlign:"center", borderColor:"#5a1010", color:"#ee4444" }}>⚔ Attaquer</button>
-                <button onClick={()=>setInput(`Je tente de fuir le combat contre ${enemy.name} !`)} style={{ ...S.skillBtn(false), marginTop:3, textAlign:"center", borderColor:"#2a2808", color:"#aa8844" }}>🏃 Fuir</button>
-              </div>
-            </>
-          )}
-
-          <div style={S.secTitle}>▸ Système D100</div>
-          <div style={{ fontSize:9, color:"#4a2808", lineHeight:1.8 }}>
-            🎲 &lt;50 → échec<br/>
-            🎲 &gt;50 → succès<br/>
-            🎲 80+ → critique!<br/>
-            🎲 ≤20 → désastre!
+              <button onClick={resetGame}
+                style={{flex:1,background:"#100404",border:"1px solid #3a1010",borderRadius:8,color:"#884444",padding:"10px",cursor:"pointer",fontSize:12,fontFamily:"'Cinzel',serif",letterSpacing:1}}>
+                🔄 Recommencer
+              </button>
+            </div>
+            <button onClick={()=>{localStorage.removeItem(APIKEY_KEY);setKeySet(false);setApiKey("");}}
+              style={{width:"100%",background:"#0a0808",border:"1px solid #2a1010",borderRadius:8,color:"#5a3030",padding:"9px",cursor:"pointer",fontSize:11,fontFamily:"'Cinzel',serif",marginTop:8}}>
+              🔑 Changer la clé API
+            </button>
           </div>
-          <div style={S.secTitle}>▸ Session</div>
-          <button onClick={()=>{ localStorage.removeItem("stb_api_key"); setKeySet(false); setApiKey(""); }}
-            style={{ ...S.quickBtn("#3a1010","#aa4444"), fontSize:9 }}>🔑 Changer la clé</button>
+        )}
+
+        {/* ── CAPACITÉS ── */}
+        {tab==="skills" && (
+          <div style={{flex:1,overflowY:"auto",padding:"12px",display:"flex",flexDirection:"column",gap:8}}>
+
+            {enemy&&(
+              <div style={{background:"#160404",border:"1px solid #5a1010",borderRadius:10,padding:"12px",marginBottom:4}}>
+                <div style={{fontSize:13,color:"#e84040",fontFamily:"'Cinzel',serif",marginBottom:8}}>☠ COMBAT — {enemy.name}</div>
+                <StatBar value={enemy.hp} max={100} color="#cc2222" label="PV ENNEMI" icon="💀" />
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginTop:8}}>
+                  <button onClick={()=>{setInput("J'attaque "+enemy.name+" à mains nues avec toute ma force !");setTab("journal");}}
+                    style={{background:"#2a0404",border:"1px solid #6a1010",borderRadius:8,color:"#ee4444",padding:"10px",cursor:"pointer",fontSize:13}}>⚔ Attaquer</button>
+                  <button onClick={()=>{setInput("Je tente de fuir le combat contre "+enemy.name+" !");setTab("journal");}}
+                    style={{background:"#1a1404",border:"1px solid #4a3810",borderRadius:8,color:"#aa8844",padding:"10px",cursor:"pointer",fontSize:13}}>🏃 Fuir</button>
+                </div>
+              </div>
+            )}
+
+            <div style={{fontFamily:"'Cinzel',serif",fontSize:11,color:"#5a3818",letterSpacing:3,marginBottom:2}}>▸ COMPÉTENCES</div>
+
+            {char.skills.length===0 ? (
+              <div style={{background:"#0a0804",border:"1px dashed #2a1808",borderRadius:10,padding:"20px",textAlign:"center",color:"#3a2808",fontSize:13,fontStyle:"italic"}}>
+                Aucune compétence.<br/>
+                <span style={{fontSize:11}}>Monte de niveau pour en débloquer.</span>
+              </div>
+            ) : char.skills.map((sk,i)=>{
+              const dis = sk.type==="rage"?char.rage<sk.cost:char.stamina<sk.cost;
+              return (
+                <button key={i} onClick={()=>useSkill(sk)} disabled={dis}
+                  style={{background:dis?"#0a0804":"#120a02",border:"1px solid "+(dis?"#1e1408":"#4a2c10"),borderRadius:10,padding:"12px 13px",cursor:dis?"not-allowed":"pointer",color:dis?"#3a2808":"#c89060",fontSize:13,textAlign:"left",width:"100%",opacity:dis?0.5:1}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                    <span style={{fontWeight:600,fontFamily:"'Cinzel',serif",fontSize:12}}>{sk.name}</span>
+                    <span style={{fontSize:11,color:sk.type==="rage"?"#dd6611":"#2288cc"}}>-{sk.cost} {sk.type==="rage"?"🔥":"⚡"}</span>
+                  </div>
+                  <div style={{fontSize:12,color:"#6a4828"}}>{sk.desc}</div>
+                  {sk.dmg!=="—"&&<div style={{fontSize:11,color:"#aa6622",marginTop:3}}>🗡 {sk.dmg}</div>}
+                </button>
+              );
+            })}
+
+            <div style={{fontFamily:"'Cinzel',serif",fontSize:11,color:"#5a3818",letterSpacing:3,margin:"6px 0 4px"}}>▸ ACTIONS</div>
+            {[
+              {label:"🧪 Potion de soin (+40 PV) ×"+(char.inventory.find(i=>i.name==="Potion de soin")?.qty||0), action:usePotion, bc:"#2a4010", tc:"#88cc44", dis:!char.inventory.find(i=>i.name==="Potion de soin"&&i.qty>0)},
+              {label:"🌙 Se reposer", action:()=>{setInput("Je cherche un endroit sûr pour me reposer et récupérer.");setTab("journal");}, bc:"#101830", tc:"#4488aa", dis:false},
+              {label:"🗺 Explorer les alentours", action:()=>{setInput("J'explore prudemment les alentours à la recherche de quelque chose d'utile.");setTab("journal");}, bc:"#302810", tc:"#aa9944", dis:false},
+              {label:"👁 Inspecter la zone", action:()=>{setInput("J'inspecte attentivement la zone pour repérer des pièges, ennemis ou objets cachés.");setTab("journal");}, bc:"#102028", tc:"#4499aa", dis:false},
+            ].map((a,i)=>(
+              <button key={i} onClick={a.action} disabled={a.dis}
+                style={{background:"#0e0a02",border:"1px solid "+a.bc,borderRadius:10,color:a.dis?"#3a3020":a.tc,padding:"11px 13px",cursor:a.dis?"not-allowed":"pointer",fontSize:13,textAlign:"left",opacity:a.dis?0.4:1}}>
+                {a.label}
+              </button>
+            ))}
+
+            <div style={{background:"#0a0a08",border:"1px solid #1e1e10",borderRadius:8,padding:"10px 12px",marginTop:4}}>
+              <div style={{fontSize:10,color:"#4a3808",fontFamily:"'Cinzel',serif",letterSpacing:2,marginBottom:6}}>▸ SYSTÈME D100</div>
+              <div style={{fontSize:12,color:"#4a3808",lineHeight:2.1}}>
+                🎲 &gt;80 → Critique !&nbsp;&nbsp;🎲 51–79 → Succès<br/>
+                🎲 21–50 → Échec&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;🎲 ≤20 → Désastre !
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* INPUT */}
+      {tab==="journal" && (
+        <div style={{padding:"8px 10px",background:"#0a0702",borderTop:"1px solid #1e1208",flexShrink:0,display:"flex",gap:8}}>
+          <input ref={inputRef}
+            style={{flex:1,background:"#120a02",border:"1px solid #3a2010",borderRadius:10,color:"#d4b896",padding:"10px 13px",fontSize:14,outline:"none"}}
+            value={input} onChange={e=>setInput(e.target.value)}
+            onKeyDown={e=>e.key==="Enter"&&!e.shiftKey&&send()}
+            placeholder="Que fais-tu, barbare ?" disabled={loading} />
+          <button onClick={send} disabled={loading}
+            style={{background:loading?"#1a0e04":"linear-gradient(135deg,#8a4a10,#c8762a)",border:"1px solid #c8762a",borderRadius:10,color:"#ffd4a0",padding:"10px 16px",cursor:"pointer",fontFamily:"'Cinzel',serif",fontSize:12,letterSpacing:1,flexShrink:0}}>
+            {loading?"...":"AGIR"}
+          </button>
         </div>
+      )}
+
+      {/* BOTTOM NAV */}
+      <div style={{display:"flex",background:"#0c0804",borderTop:"1px solid #2a1808",flexShrink:0}}>
+        {[
+          {id:"journal", icon:"📜", label:"Journal"},
+          {id:"skills",  icon:"⚔️",  label:"Capacités"},
+          {id:"perso",   icon:"🧍",  label:"Personnage"},
+        ].map(t=>(
+          <button key={t.id} onClick={()=>setTab(t.id)}
+            style={{flex:1,background:"transparent",border:"none",borderTop:"2px solid "+(tab===t.id?"#c8762a":"transparent"),padding:"9px 4px 7px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+            <span style={{fontSize:20}}>{t.icon}</span>
+            <span style={{fontSize:9,color:tab===t.id?"#c8762a":"#4a2808",fontFamily:"'Cinzel',serif",letterSpacing:1}}>{t.label}</span>
+          </button>
+        ))}
       </div>
     </div>
   );
