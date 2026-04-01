@@ -1,263 +1,501 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0"/>
   <title>Surviving the Dungeon — Barbarian</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
-  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=EB+Garamond:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=EB+Garamond:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet"/>
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
-    html, body, #root { height: 100%; background: #0a0704; }
-    body { overflow: hidden; }
-    @keyframes fadeNotif { 0%{opacity:0;transform:translateX(-50%) translateY(-10px)} 15%{opacity:1;transform:translateX(-50%) translateY(0)} 75%{opacity:1} 100%{opacity:0} }
-    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
-    @keyframes slideIn { from{opacity:0;transform:translateY(20px)} to{opacity:1;transform:translateY(0)} }
-    ::-webkit-scrollbar { width: 3px }
-    ::-webkit-scrollbar-thumb { background: #3a2010; border-radius: 2px }
+    *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+    html,body,#root{height:100%;background:#0a0704}
+    body{overflow:hidden}
+    @keyframes fadeNotif{0%{opacity:0;transform:translateX(-50%) translateY(-10px)}15%{opacity:1;transform:translateX(-50%) translateY(0)}75%{opacity:1}100%{opacity:0}}
+    @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+    @keyframes slideIn{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+    @keyframes danger{0%,100%{box-shadow:none}50%{box-shadow:inset 0 0 30px #cc000033}}
+    ::-webkit-scrollbar{width:3px}::-webkit-scrollbar-thumb{background:#3a2010;border-radius:2px}
   </style>
 </head>
-<body>
-<div id="root"></div>
+<body><div id="root"></div>
 <script type="text/babel">
-const { useState, useEffect, useRef, useCallback } = React;
+const {useState,useEffect,useRef,useCallback} = React;
 
-// ── Toutes les compétences du jeu (débloquées progressivement) ────────────────
-const ALL_SKILLS = [
-  { id:"s1", name:"Frappe Brutale",   unlockLv:2,  cost:10, type:"rage",    desc:"Écrase l'ennemi avec une force dévastatrice.",      dmg:"2d10+FOR" },
-  { id:"s2", name:"Cri de Guerre",    unlockLv:3,  cost:20, type:"rage",    desc:"Terrifie les ennemis proches, réduit leur ATK.",    dmg:"—" },
-  { id:"s3", name:"Peau d'Écorce",    unlockLv:4,  cost:15, type:"stamina", desc:"+4 DEF pendant 3 tours.",                          dmg:"—" },
-  { id:"s4", name:"Tourbillon",       unlockLv:6,  cost:30, type:"rage",    desc:"Touche tous les ennemis adjacents.",                dmg:"1d8+FOR" },
-  { id:"s5", name:"Rugissement",      unlockLv:5,  cost:25, type:"rage",    desc:"Augmente ta FOR de +3 pendant 2 tours.",            dmg:"—" },
-  { id:"s6", name:"Charge Sauvage",   unlockLv:8,  cost:35, type:"stamina", desc:"Fonce sur l'ennemi, étourdit 1 tour.",              dmg:"1d12+FOR" },
-  { id:"s7", name:"Transe Barbare",   unlockLv:10, cost:50, type:"rage",    desc:"Entre en état de transe, immunité à la douleur 3t.", dmg:"—" },
+// ═══════════════════════════════════════════════════════════════════════════════
+// SOUND ENGINE — Web Audio API procédural
+// ═══════════════════════════════════════════════════════════════════════════════
+class SoundEngine {
+  constructor(){ this.ctx=null; this.master=null; this.nodes=[]; this.mode=null; this.enabled=true; }
+
+  init(){
+    if(this.ctx) return;
+    this.ctx = new (window.AudioContext||window.webkitAudioContext)();
+    this.master = this.ctx.createGain();
+    this.master.gain.value = 0.18;
+    this.master.connect(this.ctx.destination);
+  }
+
+  stop(){
+    this.nodes.forEach(n=>{ try{ n.stop?.(); n.disconnect?.(); }catch{} });
+    this.nodes=[];
+  }
+
+  noise(freq=200, q=1, vol=0.05, type="sawtooth"){
+    if(!this.ctx||!this.enabled) return null;
+    const osc=this.ctx.createOscillator();
+    const gain=this.ctx.createGain();
+    const filter=this.ctx.createBiquadFilter();
+    filter.type="lowpass"; filter.frequency.value=freq; filter.Q.value=q;
+    osc.type=type; osc.frequency.value=freq*0.5;
+    gain.gain.value=vol;
+    osc.connect(filter); filter.connect(gain); gain.connect(this.master);
+    osc.start(); this.nodes.push(osc,gain,filter); return {osc,gain,filter};
+  }
+
+  droneLayer(freq,vol,detune=0){
+    if(!this.ctx||!this.enabled) return;
+    const osc=this.ctx.createOscillator();
+    const gain=this.ctx.createGain();
+    osc.type="sine"; osc.frequency.value=freq; osc.detune.value=detune;
+    gain.gain.value=0;
+    gain.gain.linearRampToValueAtTime(vol,this.ctx.currentTime+3);
+    osc.connect(gain); gain.connect(this.master);
+    osc.start(); this.nodes.push(osc,gain);
+  }
+
+  pulse(freq,interval,vol=0.08){
+    if(!this.ctx||!this.enabled) return;
+    const tick=()=>{
+      if(!this.enabled) return;
+      const osc=this.ctx.createOscillator();
+      const gain=this.ctx.createGain();
+      osc.type="triangle"; osc.frequency.value=freq;
+      gain.gain.setValueAtTime(vol,this.ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001,this.ctx.currentTime+0.3);
+      osc.connect(gain); gain.connect(this.master);
+      osc.start(); osc.stop(this.ctx.currentTime+0.35);
+    };
+    tick();
+    const id=setInterval(tick,interval);
+    this.nodes.push({stop:()=>clearInterval(id)});
+  }
+
+  drip(){
+    if(!this.ctx||!this.enabled) return;
+    const sched=()=>{
+      const delay=(2+Math.random()*6)*1000;
+      const t=setTimeout(()=>{
+        if(!this.enabled) return;
+        const osc=this.ctx.createOscillator();
+        const gain=this.ctx.createGain();
+        osc.type="sine"; osc.frequency.value=800+Math.random()*400;
+        gain.gain.setValueAtTime(0.06,this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001,this.ctx.currentTime+0.4);
+        osc.connect(gain); gain.connect(this.master);
+        osc.start(); osc.stop(this.ctx.currentTime+0.45);
+        sched();
+      },delay);
+      this.nodes.push({stop:()=>clearTimeout(t)});
+    };
+    sched();
+  }
+
+  setMode(mode,hp=100,hpMax=100){
+    if(!this.ctx||!this.enabled) return;
+    if(mode===this.mode && !(hp/hpMax<0.25)) return;
+    this.stop(); this.mode=mode;
+    const danger = hp/hpMax<0.25;
+
+    if(mode==="explore"){
+      this.droneLayer(40,0.12);        // grondement profond
+      this.droneLayer(60,0.06,5);      // harmonique
+      this.droneLayer(80,0.04,-3);
+      this.drip();                     // gouttes d'eau
+      if(danger) this.pulse(55,1200,0.1);
+    } else if(mode==="combat"){
+      this.droneLayer(50,0.15);
+      this.droneLayer(75,0.10,8);
+      this.droneLayer(100,0.07,-5);
+      this.pulse(60,600,0.12);         // battement rapide
+      this.noise(300,2,0.04,"sawtooth");
+      if(danger) this.pulse(40,400,0.15);
+    } else if(mode==="rest"){
+      this.droneLayer(35,0.08);
+      this.droneLayer(52,0.05,3);
+      this.droneLayer(70,0.03);
+      this.drip();
+    } else if(mode==="danger"){
+      this.droneLayer(45,0.18);
+      this.pulse(50,900,0.14);
+      this.noise(200,3,0.06,"sawtooth");
+    } else if(mode==="dead"){
+      this.droneLayer(30,0.2);
+      this.noise(100,1,0.08,"sine");
+    }
+  }
+
+  toggle(v){ this.enabled=v; if(!v) this.stop(); else this.setMode(this.mode||"explore"); }
+}
+const SE = new SoundEngine();
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CONSTANTES
+// ═══════════════════════════════════════════════════════════════════════════════
+const ALL_SKILLS=[
+  {id:"s1",name:"Frappe Brutale",  unlockLv:2, cost:10,type:"rage",   desc:"Écrase l'ennemi avec une force dévastatrice.",dmg:"2d10+FOR"},
+  {id:"s2",name:"Cri de Guerre",   unlockLv:3, cost:20,type:"rage",   desc:"Terrifie les ennemis proches, réduit leur ATK.",dmg:"—"},
+  {id:"s3",name:"Peau d'Écorce",   unlockLv:4, cost:15,type:"stamina",desc:"+4 DEF pendant 3 tours.",dmg:"—"},
+  {id:"s4",name:"Tourbillon",      unlockLv:6, cost:30,type:"rage",   desc:"Touche tous les ennemis adjacents.",dmg:"1d8+FOR"},
+  {id:"s5",name:"Rugissement",     unlockLv:5, cost:25,type:"rage",   desc:"+3 FOR pendant 2 tours.",dmg:"—"},
+  {id:"s6",name:"Charge Sauvage",  unlockLv:8, cost:35,type:"stamina",desc:"Fonce, étourdit 1 tour.",dmg:"1d12+FOR"},
+  {id:"s7",name:"Transe Barbare",  unlockLv:10,cost:50,type:"rage",   desc:"Transe : immunité douleur 3 tours.",dmg:"—"},
 ];
 
-const INITIAL_CHAR = {
-  name:"Bjorn", class:"Barbare", level:1, xp:0, xpNext:100,
-  hp:80, hpMax:80, stamina:60, staminaMax:60, rage:0, rageMax:100,
-  stats:{ FOR:14, AGI:8, END:12, INT:3, CHA:2, PER:6 },
-  skills:[], // Aucune compétence au départ
-  inventory:[], // Aucun objet au départ
-  gold:0, floor:1, location:"Entrée du Donjon",
+const INITIAL_CHAR={
+  name:"Bjorn",class:"Barbare",level:1,xp:0,xpNext:100,
+  hp:80,hpMax:80,stamina:60,staminaMax:60,rage:0,rageMax:100,
+  stats:{FOR:14,AGI:8,END:12,INT:3,CHA:2,PER:6},
+  skills:[],inventory:[],gold:0,floor:1,location:"Entrée du Donjon",
+  // SURVIE
+  hunger:100,hungerMax:100,
+  thirst:100,thirstMax:100,
+  temp:18, // °C — normal = 10-25
 };
 
-const SYSTEM_PROMPT = `Tu es le Maître du Jeu d'un RPG sombre basé sur le manhwa "Surviving the Game as a Barbarian".
-Le joueur incarne Bjorn, un barbare de niveau 1 — mains nues, sans équipement, sans compétences. Il vient d'être réincarné dans le jeu "Dungeon & Stone".
+const SYSTEM_PROMPT=`Tu es le Maître du Jeu d'un RPG BRUTAL basé sur "Surviving the Game as a Barbarian".
+Bjorn est un barbare de Nv.1 réincarné dans "Dungeon & Stone" — mains nues, sans équipement, sans or, sans compétences.
 
-RÈGLES DU JEU :
-- Système D100 : lancé automatiquement à chaque action risquée. <50 = échec, >50 = succès. 80+ = critique, 20- = catastrophe.
-- Toujours décrire les résultats en tenant compte des stats (FOR/AGI/END/INT/CHA/PER).
-- Bjorn commence SANS arme, SANS armure, SANS compétences. Il doit TOUT trouver dans le donjon.
-- Les objets (armes, armures, potions, or) doivent être trouvés/volés/craftés en jeu via loot ou événements.
-- Les compétences se débloquent automatiquement à chaque montée de niveau (le jeu le gère).
-- Environnement : donjons dangereux, monstres impitoyables, pièges, PNJs méfiants.
-- Ton : brutal, viscéral, dark fantasy. Descriptions courtes et percutantes. Max 4 phrases par réponse.
-- À chaque action, retourne un JSON structuré UNIQUEMENT dans un bloc \`\`\`json ... \`\`\` SUIVI du texte narratif.
+RÈGLES FONDAMENTALES :
+- D100 : <50=échec, >50=succès, 80+=critique, ≤20=désastre
+- Le jeu est TRÈS DIFFICILE. Économie brutale : objets rares, chers, ou nécessitant des sacrifices.
+- Bjorn n'a RIEN au départ. Tout doit être trouvé/volé/fabriqué/acheté avec difficulté.
+- Eau rare dans le donjon. Nourriture encore plus rare. Jamais gratuit.
+- Température : les niveaux profonds sont glaciaux, certaines zones brûlantes.
+- Un marchand peut apparaître rarement, mais prix exorbitants.
+- Les PNJs sont méfiants. Pas de filet de sécurité.
+- Ton : brutal, viscéral, sans pitié. Max 4 phrases.
 
-FORMAT JSON OBLIGATOIRE :
+RÈGLES DE SURVIE — hungerChange et thirstChange DOIVENT refléter la logique de l'action :
+- Se reposer / dormir         → faim: 0   soif: 0    (corps au repos, aucune consommation)
+- Parler / observer / attendre → faim: 0   soif: 0    (aucune consommation — immobile)
+- Marcher / explorer           → faim: -5  soif: -6   (effort modéré)
+- Combat court (<3 rounds)     → faim: -8  soif: -12  (effort intense)
+- Combat long / sprint / fuite → faim: -12 soif: -18  (effort extrême)
+- Utiliser une compétence rage → faim: -10 soif: -15  (effort maximal)
+- Manger (loot food)           → faim: +25 à +40 selon nourriture
+- Boire (loot water)           → soif: +30 à +50 selon quantité
+- Zone chaude (>35°C)          → soif supplémentaire -5 à -10
+- Zone froide (<5°C)           → soif -2 mais temp baisse
+
+TOUJOURS calculer hungerChange et thirstChange selon l'action réelle. Ne jamais mettre 0 sauf dialogue immobile.
+
+FORMAT JSON OBLIGATOIRE dans un bloc \`\`\`json\`\`\` AVANT le texte :
 {
-  "roll": <null ou nombre 1-100>,
+  "roll": <1-100 ou null>,
   "success": <true/false/null>,
   "hpChange": <nombre>,
   "staminaChange": <nombre>,
   "rageChange": <nombre>,
   "goldChange": <nombre>,
   "xpGain": <nombre>,
+  "hungerChange": <nombre — OBLIGATOIRE, jamais null>,
+  "thirstChange": <nombre — OBLIGATOIRE, jamais null>,
+  "tempChange": <variation °C ou 0>,
   "event": <"combat"|"explore"|"dialogue"|"loot"|"rest"|null>,
-  "enemyHp": <null ou nombre 0-100>,
+  "enemyHp": <null ou 0-100>,
   "enemyName": <null ou string>,
   "locationChange": <null ou string>,
-  "lootItem": <null ou {"name":"...","type":"weapon|armor|consumable|food","icon":"emoji","qty":1}>
+  "lootItem": <null ou {"name":"...","type":"weapon|armor|consumable|food|water","icon":"emoji","qty":1}>
+}`;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// HELPERS
+// ═══════════════════════════════════════════════════════════════════════════════
+function clamp(v,mn,mx){return Math.max(mn,Math.min(mx,v));}
+
+function getSurvivalMalus(char){
+  let forMod=0,agiMod=0,endMod=0,hpDrain=0,staDrain=0;
+  // FAIM
+  if(char.hunger<20){forMod-=8;endMod-=6;hpDrain+=5;staDrain+=10;}
+  else if(char.hunger<40){forMod-=4;endMod-=3;staDrain+=5;}
+  else if(char.hunger<70){forMod-=2;endMod-=1;}
+  // SOIF
+  if(char.thirst<20){agiMod-=8;hpDrain+=8;staDrain+=15;}
+  else if(char.thirst<40){agiMod-=4;staDrain+=8;}
+  else if(char.thirst<70){agiMod-=2;}
+  // TEMPÉRATURE
+  if(char.temp<0){hpDrain+=6;staDrain+=10;}
+  else if(char.temp<5){hpDrain+=3;staDrain+=5;}
+  else if(char.temp>40){hpDrain+=4;char.thirstChange=-5;}
+  else if(char.temp>35){staDrain+=5;}
+  return {forMod,agiMod,endMod,hpDrain,staDrain};
 }
 
-Le texte narratif doit être en français, immersif, et suivre immédiatement le bloc JSON.`;
+function getSurvivalStatus(char){
+  const warnings=[];
+  if(char.hunger<=0)   warnings.push({text:"💀 FAMINE — PV en chute !",color:"#ff2222",blink:true});
+  else if(char.hunger<20) warnings.push({text:"💀 FAMINE CRITIQUE",color:"#ff4444",blink:true});
+  else if(char.hunger<40) warnings.push({text:"🍖 Affamé",color:"#cc6622"});
+  else if(char.hunger<70) warnings.push({text:"🍖 Faim",color:"#aa7733"});
+  if(char.thirst<=0)   warnings.push({text:"💀 DÉSHYDRATATION — PV en chute !",color:"#ff2222",blink:true});
+  else if(char.thirst<20) warnings.push({text:"💀 DÉSHYDRATATION CRITIQUE",color:"#2299ff",blink:true});
+  else if(char.thirst<40) warnings.push({text:"💧 Assoiffé",color:"#2277cc"});
+  else if(char.thirst<70) warnings.push({text:"💧 Soif",color:"#2266aa"});
+  if(char.temp<0)   warnings.push({text:"🥶 HYPOTHERMIE — PV en chute !",color:"#88ccff",blink:true});
+  else if(char.temp<5)  warnings.push({text:"🥶 Gelé",color:"#66aaee"});
+  else if(char.temp>40) warnings.push({text:"🔥 COUP DE CHALEUR — PV en chute !",color:"#ff8822",blink:true});
+  else if(char.temp>35) warnings.push({text:"🔥 Surchauffé",color:"#ee6622"});
+  return warnings;
+}
 
-function StatBar({ value, max, color, label, icon }) {
-  const pct = Math.max(0, Math.min(100, (value/max)*100));
-  return (
-    <div style={{ marginBottom:8 }}>
-      <div style={{ display:"flex", justifyContent:"space-between", fontSize:11, color:"#a89070", marginBottom:3 }}>
+function StatBar({value,max,color,label,icon,warn=false}){
+  const pct=Math.max(0,Math.min(100,(value/max)*100));
+  const barColor = warn ? (pct<20?"#ff2222":pct<40?color+"cc":color) : color;
+  return(
+    <div style={{marginBottom:7}}>
+      <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:"#a89070",marginBottom:2}}>
         <span>{icon} {label}</span>
-        <span style={{ color:"#d4b070" }}>{value}<span style={{ color:"#5a3818" }}>/{max}</span></span>
+        <span style={{color:pct<25?"#ff4444":pct<50?"#ffaa44":"#d4b070"}}>{value}<span style={{color:"#5a3818"}}>/{max}</span></span>
       </div>
-      <div style={{ height:7, background:"#1a1208", borderRadius:4, overflow:"hidden", border:"1px solid #2a1a08" }}>
-        <div style={{ height:"100%", width:`${pct}%`, background:color, transition:"width 0.5s ease", borderRadius:4 }} />
+      <div style={{height:6,background:"#1a1208",borderRadius:3,overflow:"hidden",border:"1px solid #2a1a08"}}>
+        <div style={{height:"100%",width:pct+"%",background:barColor,transition:"width 0.5s",borderRadius:3}}/>
       </div>
     </div>
   );
 }
 
-const SAVE_KEY  = "stb_save_v2";
-const APIKEY_KEY = "stb_key";
+function TempBadge({temp}){
+  const color = temp<0?"#88ccff":temp<5?"#66aadd":temp<10?"#99bbcc":temp>40?"#ff6622":temp>35?"#ff8844":temp>25?"#ffaa44":"#66aa88";
+  const icon  = temp<5?"🥶":temp>35?"🔥":"🌡";
+  return <span style={{fontSize:10,color,fontFamily:"'Cinzel',serif"}}>{icon} {temp}°C</span>;
+}
 
-function App() {
-  const [apiKey, setApiKey] = useState(localStorage.getItem(APIKEY_KEY)||"");
-  const [keySet, setKeySet] = useState(!!localStorage.getItem(APIKEY_KEY));
-  const [char, setChar]     = useState(() => {
-    try { const s = localStorage.getItem(SAVE_KEY); return s ? JSON.parse(s).char : INITIAL_CHAR; } catch{ return INITIAL_CHAR; }
+const SAVE_KEY="stb_save_v3";
+const APIKEY_KEY="stb_key";
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// APP
+// ═══════════════════════════════════════════════════════════════════════════════
+function App(){
+  const [apiKey,setApiKey]=useState(localStorage.getItem(APIKEY_KEY)||"");
+  const [keySet,setKeySet]=useState(!!localStorage.getItem(APIKEY_KEY));
+  const [char,setChar]=useState(()=>{
+    try{const s=localStorage.getItem(SAVE_KEY);return s?JSON.parse(s).char:INITIAL_CHAR;}catch{return INITIAL_CHAR;}
   });
-  const [messages, setMessages] = useState(() => {
-    try { const s = localStorage.getItem(SAVE_KEY); return s ? JSON.parse(s).messages : [{role:"assistant",text:"Les portes de pierre s'ouvrent dans un grondement sourd. L'air chaud et fétide du donjon t'enveloppe. Tu es Bjorn — mains nues, sans armure, sans rien. Un barbare réincarné dans ce cauchemar. Le niveau 1 commence maintenant. Que fais-tu ?",roll:null,success:null}]; } catch{ return [{role:"assistant",text:"Les portes de pierre s'ouvrent dans un grondement sourd. L'air chaud et fétide du donjon t'enveloppe. Tu es Bjorn — mains nues, sans armure, sans rien. Un barbare réincarné dans ce cauchemar. Le niveau 1 commence maintenant. Que fais-tu ?",roll:null,success:null}]; }
+  const [messages,setMessages]=useState(()=>{
+    try{const s=localStorage.getItem(SAVE_KEY);return s?JSON.parse(s).messages:[{role:"assistant",text:"Les portes de pierre s'ouvrent dans un grondement sourd. Tu es Bjorn — mains nues, ventre vide, gorge sèche. Le donjon est glacial. Tu n'as rien. Personne ne t'aidera. Que fais-tu ?",roll:null}];}
+    catch{return [{role:"assistant",text:"Les portes de pierre s'ouvrent dans un grondement sourd. Tu es Bjorn — mains nues, ventre vide, gorge sèche. Le donjon est glacial. Tu n'as rien. Personne ne t'aidera. Que fais-tu ?",roll:null}];}
   });
-  const [input, setInput]   = useState("");
-  const [loading, setLoad]  = useState(false);
-  const [tab, setTab]       = useState("journal");
-  const [enemy, setEnemy]   = useState(null);
-  const [notif, setNotif]   = useState(null);
-  const [saveFlash, setSaveFlash] = useState(false);
-  const [showNewSkill, setShowNewSkill] = useState(null);
-  const endRef   = useRef(null);
-  const history  = useRef([]);
-  const inputRef = useRef(null);
+  const [input,setInput]=useState("");
+  const [loading,setLoad]=useState(false);
+  const [tab,setTab]=useState("journal");
+  const [enemy,setEnemy]=useState(null);
+  const [notif,setNotif]=useState(null);
+  const [saveFlash,setSaveFlash]=useState(false);
+  const [newSkill,setNewSkill]=useState(null);
+  const [soundOn,setSoundOn]=useState(false);
+  const [dead,setDead]=useState(false);
+  const endRef=useRef(null);
+  const history=useRef([]);
+  const inputRef=useRef(null);
+  const soundMode=useRef("explore");
 
-  // ── AUTO-SAVE ──────────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!keySet) return;
-    try {
-      localStorage.setItem(SAVE_KEY, JSON.stringify({ char, messages: messages.slice(-40) }));
-    } catch{}
-  }, [char, messages, keySet]);
+  // ── SAUVEGARDE AUTO ──────────────────────────────────────────────────────────
+  useEffect(()=>{
+    if(!keySet)return;
+    try{localStorage.setItem(SAVE_KEY,JSON.stringify({char,messages:messages.slice(-50)}));}catch{}
+  },[char,messages,keySet]);
 
-  useEffect(() => { if(tab==="journal") endRef.current?.scrollIntoView({ behavior:"smooth" }); }, [messages, tab]);
+  useEffect(()=>{if(tab==="journal")endRef.current?.scrollIntoView({behavior:"smooth"});},[messages,tab]);
 
-  const showNotif = (text, color="#ffd700") => {
+  // ── DEATH CHECK ──────────────────────────────────────────────────────────────
+  useEffect(()=>{
+    if(char.hp<=0&&!dead){
+      setDead(true);
+      SE.setMode("dead");
+      setMessages(p=>[...p,{role:"assistant",text:"☠ BJORN EST MORT. La faim, la soif, le froid ou les coups ont eu raison de toi. Le donjon n'a aucune pitié. Recommence depuis le début.",roll:null}]);
+    }
+  },[char.hp]);
+
+  // ── SON ──────────────────────────────────────────────────────────────────────
+  const updateSound=(mode,hp,hpMax)=>{
+    if(!soundOn)return;
+    soundMode.current=mode;
+    SE.setMode(mode,hp,hpMax);
+  };
+
+  const toggleSound=()=>{
+    if(!soundOn){
+      SE.init();
+      SE.setMode(soundMode.current||"explore",char.hp,char.hpMax);
+      setSoundOn(true);
+    } else {
+      SE.toggle(false);
+      setSoundOn(false);
+    }
+  };
+
+  const showNotif=(text,color="#ffd700")=>{
     setNotif({text,color});
-    setTimeout(()=>setNotif(null), 2400);
+    setTimeout(()=>setNotif(null),2600);
   };
 
-  const saveKey = () => { localStorage.setItem(APIKEY_KEY, apiKey); setKeySet(true); };
+  const saveKey=()=>{localStorage.setItem(APIKEY_KEY,apiKey);setKeySet(true);};
 
-  const manualSave = () => {
-    try {
-      localStorage.setItem(SAVE_KEY, JSON.stringify({ char, messages: messages.slice(-40) }));
-      setSaveFlash(true);
-      setTimeout(()=>setSaveFlash(false), 1500);
-      showNotif("💾 Partie sauvegardée !","#44aaff");
-    } catch{ showNotif("⚠️ Erreur de sauvegarde","#cc4444"); }
+  const manualSave=()=>{
+    try{
+      localStorage.setItem(SAVE_KEY,JSON.stringify({char,messages:messages.slice(-50)}));
+      setSaveFlash(true); setTimeout(()=>setSaveFlash(false),1500);
+      showNotif("💾 Sauvegardé !","#44aaff");
+    }catch{showNotif("⚠️ Erreur save","#cc4444");}
   };
 
-  const resetGame = () => {
-    if (!window.confirm("Recommencer depuis le début ?")) return;
+  const resetGame=()=>{
+    if(!window.confirm("Recommencer depuis le début ?"))return;
     localStorage.removeItem(SAVE_KEY);
     setChar(INITIAL_CHAR);
-    setMessages([{role:"assistant",text:"Les portes de pierre s'ouvrent dans un grondement sourd. L'air chaud et fétide du donjon t'enveloppe. Tu es Bjorn — mains nues, sans armure, sans rien. Un barbare réincarné dans ce cauchemar. Le niveau 1 commence maintenant. Que fais-tu ?",roll:null,success:null}]);
-    setEnemy(null);
-    history.current = [];
+    setMessages([{role:"assistant",text:"Les portes de pierre s'ouvrent dans un grondement sourd. Tu es Bjorn — mains nues, ventre vide, gorge sèche. Le donjon est glacial. Tu n'as rien. Que fais-tu ?",roll:null}]);
+    setEnemy(null); setDead(false); history.current=[];
     showNotif("🔄 Nouvelle partie","#c8862a");
+    SE.setMode("explore");
   };
 
-  // ── LEVEL UP avec déblocage de compétences ─────────────────────────────────
-  const applyDelta = useCallback((d, c0) => {
-    const c = {...c0, stats:{...c0.stats}, inventory:[...c0.inventory], skills:[...c0.skills]};
-    if (d.hpChange)      c.hp      = Math.max(0,Math.min(c.hpMax,      c.hp      + d.hpChange));
-    if (d.staminaChange) c.stamina = Math.max(0,Math.min(c.staminaMax, c.stamina + d.staminaChange));
-    if (d.rageChange)    c.rage    = Math.max(0,Math.min(c.rageMax,    c.rage    + d.rageChange));
-    if (d.goldChange)    c.gold    = Math.max(0, c.gold + d.goldChange);
+  // ── DELTA APPLICATION ────────────────────────────────────────────────────────
+  const applyDelta=useCallback((d,c0)=>{
+    const c={...c0,stats:{...c0.stats},inventory:[...c0.inventory],skills:[...c0.skills]};
+
+    // Stats vitales
+    if(d.hpChange)      c.hp      =clamp(c.hp+d.hpChange,0,c.hpMax);
+    if(d.staminaChange) c.stamina =clamp(c.stamina+d.staminaChange,0,c.staminaMax);
+    if(d.rageChange)    c.rage    =clamp(c.rage+d.rageChange,0,c.rageMax);
+    if(d.goldChange)    c.gold    =Math.max(0,c.gold+d.goldChange);
+
+    // SURVIE
+    const hungerCost = (d.hungerChange !== undefined && d.hungerChange !== null) ? d.hungerChange : -2;
+    const thirstCost = (d.thirstChange !== undefined && d.thirstChange !== null) ? d.thirstChange : -2;
+    const tempDelta  = d.tempChange   !== undefined ? d.tempChange  : 0;
+    c.hunger = clamp(c.hunger + hungerCost, 0, c.hungerMax);
+    c.thirst = clamp(c.thirst + thirstCost, 0, c.thirstMax);
+    c.temp   = clamp(c.temp   + tempDelta,  -20, 60);
+
+    // Malus survie appliqués
+    const mal=getSurvivalMalus(c);
+    if(mal.hpDrain>0)   c.hp      =Math.max(0,c.hp-mal.hpDrain);
+    if(mal.staDrain>0)  c.stamina =Math.max(0,c.stamina-mal.staDrain);
 
     // Loot
-    if (d.lootItem) {
-      const existing = c.inventory.find(i=>i.name===d.lootItem.name);
-      if (existing) { c.inventory = c.inventory.map(i=>i.name===d.lootItem.name?{...i,qty:i.qty+(d.lootItem.qty||1)}:i); }
-      else { c.inventory = [...c.inventory, {...d.lootItem, qty:d.lootItem.qty||1}]; }
+    if(d.lootItem){
+      const ex=c.inventory.find(i=>i.name===d.lootItem.name);
+      if(ex) c.inventory=c.inventory.map(i=>i.name===d.lootItem.name?{...i,qty:i.qty+(d.lootItem.qty||1)}:i);
+      else   c.inventory=[...c.inventory,{...d.lootItem,qty:d.lootItem.qty||1}];
     }
 
-    if (d.xpGain) {
-      c.xp += d.xpGain;
-      if (c.xp >= c.xpNext) {
-        c.level++; c.xp -= c.xpNext; c.xpNext = Math.floor(c.xpNext*1.6);
-        c.hpMax += 12; c.hp = Math.min(c.hpMax, c.hp+12);
-        c.staminaMax += 8; c.stamina = Math.min(c.staminaMax, c.stamina+8);
-        c.stats.FOR += 1; c.stats.END += 1;
-        // Débloquer compétences du nouveau niveau
-        const newSkills = ALL_SKILLS.filter(sk => sk.unlockLv === c.level && !c.skills.find(s=>s.id===sk.id));
-        if (newSkills.length > 0) {
-          c.skills = [...c.skills, ...newSkills];
-          setShowNewSkill(newSkills[0]);
-          setTimeout(()=>setShowNewSkill(null), 4000);
-        }
-        showNotif("⚔️ NIVEAU "+c.level+" ! +12 PV +8 END +1 FOR +1 END","#ffd700");
+    // XP / Level up
+    if(d.xpGain){
+      c.xp+=d.xpGain;
+      if(c.xp>=c.xpNext){
+        c.level++; c.xp-=c.xpNext; c.xpNext=Math.floor(c.xpNext*1.6);
+        c.hpMax+=10; c.hp=Math.min(c.hpMax,c.hp+10);
+        c.staminaMax+=6; c.stats.FOR+=1; c.stats.END+=1;
+        const ns=ALL_SKILLS.filter(sk=>sk.unlockLv===c.level&&!c.skills.find(s=>s.id===sk.id));
+        if(ns.length>0){c.skills=[...c.skills,...ns];setNewSkill(ns[0]);setTimeout(()=>setNewSkill(null),4000);}
+        showNotif("⚔️ NIVEAU "+c.level+" ! +10 PV +1 FOR +1 END","#ffd700");
       }
     }
-    if (d.locationChange) c.location = d.locationChange;
+    if(d.locationChange) c.location=d.locationChange;
     return c;
   },[]);
 
-  const send = async () => {
-    if (!input.trim() || loading) return;
-    const txt = input.trim(); setInput(""); setLoad(true);
+  // ── ENVOYER MESSAGE ──────────────────────────────────────────────────────────
+  const send=async()=>{
+    if(!input.trim()||loading||dead)return;
+    const txt=input.trim(); setInput(""); setLoad(true);
     setMessages(p=>[...p,{role:"user",text:txt}]);
     history.current.push({role:"user",content:txt});
 
-    const inv = char.inventory.length>0 ? char.inventory.map(i=>i.icon+i.name+"×"+i.qty).join(", ") : "AUCUN";
-    const ctx = "[PV:"+char.hp+"/"+char.hpMax+" END:"+char.stamina+"/"+char.staminaMax+" RAGE:"+char.rage+"/"+char.rageMax+" Or:"+char.gold+" Nv:"+char.level+" | Lieu:"+char.location+" | Inventaire:"+inv+(enemy?" | COMBAT vs "+enemy.name+" (PV:"+enemy.hp+"/100)":"")+"]";
+    const mal=getSurvivalMalus(char);
+    const inv=char.inventory.length>0?char.inventory.map(i=>i.icon+i.name+"×"+i.qty).join(", "):"AUCUN";
+    const ctx=`[PV:${char.hp}/${char.hpMax} END:${char.stamina}/${char.staminaMax} RAGE:${char.rage}/${char.rageMax} Or:${char.gold}g Nv:${char.level} | Lieu:${char.location} | Faim:${char.hunger}% Soif:${char.thirst}% Temp:${char.temp}°C | FOR:${char.stats.FOR+mal.forMod}(${mal.forMod<0?mal.forMod:"+0"}) AGI:${char.stats.AGI+mal.agiMod}(${mal.agiMod<0?mal.agiMod:"+0"}) | Inventaire:${inv}${enemy?" | COMBAT vs "+enemy.name+" (PV:"+enemy.hp+"/100)":""}]`;
 
-    try {
-      const res = await fetch("https://api.anthropic.com/v1/messages",{
+    try{
+      const res=await fetch("https://api.anthropic.com/v1/messages",{
         method:"POST",
         headers:{"Content-Type":"application/json","x-api-key":apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
-        body:JSON.stringify({ model:"claude-sonnet-4-20250514", max_tokens:700, system:SYSTEM_PROMPT,
-          messages:[...history.current.slice(-14),{role:"user",content:ctx+"\n\nAction: "+txt}] })
+        body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:700,system:SYSTEM_PROMPT,
+          messages:[...history.current.slice(-14),{role:"user",content:ctx+"\n\nAction: "+txt}]})
       });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error.message);
-      const raw = data.content?.map(b=>b.text||"").join("\n")||"";
-      let delta = {roll:null,success:null,hpChange:0,staminaChange:0,rageChange:0,goldChange:0,xpGain:0,event:null,enemyHp:null,enemyName:null,locationChange:null,lootItem:null};
-      let narrative = raw;
-      const jm = raw.match(/```json\s*([\s\S]*?)```/);
-      if (jm) { try{delta={...delta,...JSON.parse(jm[1])}}catch{} narrative=raw.replace(/```json[\s\S]*?```/,"").trim(); }
+      const data=await res.json();
+      if(data.error) throw new Error(data.error.message);
+      const raw=data.content?.map(b=>b.text||"").join("\n")||"";
 
-      if (delta.event==="combat"&&delta.enemyName) setEnemy({name:delta.enemyName,hp:delta.enemyHp??100});
-      else if (delta.enemyHp!==null&&enemy) setEnemy(p=>p?{...p,hp:delta.enemyHp}:null);
-      if (delta.enemyHp===0){setEnemy(null);showNotif("☠️ Ennemi vaincu !","#cc4444");}
-      if (delta.hpChange<0) showNotif("💔 "+delta.hpChange+" PV","#cc2222");
-      if (delta.hpChange>0) showNotif("❤️ +"+delta.hpChange+" PV","#44cc77");
-      if (delta.goldChange>0) showNotif("💰 +"+delta.goldChange+" or","#ffd700");
-      if (delta.xpGain>0) showNotif("✨ +"+delta.xpGain+" XP","#aaddff");
-      if (delta.lootItem) showNotif("📦 Obtenu : "+delta.lootItem.icon+delta.lootItem.name,"#c8a040");
+      let delta={roll:null,success:null,hpChange:0,staminaChange:0,rageChange:0,goldChange:0,xpGain:0,hungerChange:undefined,thirstChange:undefined,tempChange:undefined,event:null,enemyHp:null,enemyName:null,locationChange:null,lootItem:null};
+      let narrative=raw;
+      const jm=raw.match(/```json\s*([\s\S]*?)```/);
+      if(jm){try{delta={...delta,...JSON.parse(jm[1])};}catch{} narrative=raw.replace(/```json[\s\S]*?```/,"").trim();}
+
+      // Ennemi
+      if(delta.event==="combat"&&delta.enemyName) setEnemy({name:delta.enemyName,hp:delta.enemyHp??100});
+      else if(delta.enemyHp!==null&&enemy) setEnemy(p=>p?{...p,hp:delta.enemyHp}:null);
+      if(delta.enemyHp===0){setEnemy(null);showNotif("☠️ Ennemi vaincu !","#cc4444");}
+
+      // Son adaptatif
+      const nextMode=delta.event==="combat"?"combat":delta.event==="rest"?"rest":char.hp/char.hpMax<0.25?"danger":"explore";
+      updateSound(nextMode,char.hp+delta.hpChange,char.hpMax);
+
+      // Notifs
+      if(delta.hpChange<0)     showNotif("💔 "+delta.hpChange+" PV","#cc2222");
+      if(delta.hpChange>0)     showNotif("❤️ +"+delta.hpChange+" PV","#44cc77");
+      if(delta.goldChange>0)   showNotif("💰 +"+delta.goldChange+" or","#ffd700");
+      if(delta.goldChange<0)   showNotif("💰 "+delta.goldChange+" or","#aa6622");
+      if(delta.xpGain>0)       showNotif("✨ +"+delta.xpGain+" XP","#aaddff");
+      if(delta.lootItem)       showNotif("📦 "+delta.lootItem.icon+delta.lootItem.name,"#c8a040");
 
       setChar(p=>applyDelta(delta,p));
-      const rc = delta.roll>=80?"#ffd700":delta.roll<=20?"#ff3333":delta.success?"#44cc77":"#cc4444";
-      const rl = delta.roll>=80?"CRITIQUE!":delta.roll<=20?"DÉSASTRE!":delta.success?"SUCCÈS":"ÉCHEC";
-      setMessages(p=>[...p,{role:"assistant",text:narrative,roll:delta.roll,success:delta.success,rc,rl}]);
+      const rc=delta.roll>=80?"#ffd700":delta.roll<=20?"#ff3333":delta.success?"#44cc77":"#cc4444";
+      const rl=delta.roll>=80?"CRITIQUE!":delta.roll<=20?"DÉSASTRE!":delta.success?"SUCCÈS":"ÉCHEC";
+      setMessages(p=>[...p,{role:"assistant",text:narrative,roll:delta.roll,rc,rl}]);
       history.current.push({role:"assistant",content:narrative});
       setTab("journal");
-    } catch(e) {
+    }catch(e){
       setMessages(p=>[...p,{role:"assistant",text:"⚠️ Erreur : "+e.message,roll:null}]);
     }
     setLoad(false);
   };
 
-  const useSkill = sk => {
-    if (sk.type==="rage"&&char.rage<sk.cost){showNotif("Pas assez de Rage !","#cc4444");return;}
-    if (sk.type==="stamina"&&char.stamina<sk.cost){showNotif("Pas assez d'Endurance !","#cc4444");return;}
+  const useSkill=sk=>{
+    if(sk.type==="rage"&&char.rage<sk.cost){showNotif("Rage insuffisante !","#cc4444");return;}
+    if(sk.type==="stamina"&&char.stamina<sk.cost){showNotif("Endurance insuffisante !","#cc4444");return;}
     setInput("J'utilise "+sk.name+" — "+sk.desc);
     setTab("journal");
   };
 
-  const usePotion = () => {
-    const pot = char.inventory.find(i=>i.name==="Potion de soin"&&i.qty>0);
-    if (!pot){showNotif("Pas de potion de soin !","#cc4444");return;}
-    setChar(p=>({...p,hp:Math.min(p.hpMax,p.hp+40),inventory:p.inventory.map(i=>i.name==="Potion de soin"?{...i,qty:i.qty-1}:i)}));
-    showNotif("❤️ +40 PV (Potion)","#44cc77");
+  const useConsumable=(item)=>{
+    if(item.qty<=0){showNotif("Aucun(e) "+item.name+" !","#cc4444");return;}
+    let hp=0,hunger=0,thirst=0;
+    if(item.type==="consumable"){hp=40;showNotif("❤️ +40 PV","#44cc77");}
+    if(item.type==="food"){hunger=35;showNotif("🍖 +35 Faim","#cc8833");}
+    if(item.type==="water"){thirst=45;showNotif("💧 +45 Soif","#3388cc");}
+    setChar(p=>({...p,
+      hp:clamp(p.hp+hp,0,p.hpMax),
+      hunger:clamp(p.hunger+hunger,0,p.hungerMax),
+      thirst:clamp(p.thirst+thirst,0,p.thirstMax),
+      inventory:p.inventory.map(i=>i.name===item.name?{...i,qty:i.qty-1}:i).filter(i=>i.qty>0)
+    }));
   };
 
-  // ── ÉCRAN CLÉ API ────────────────────────────────────────────────────────────
-  if (!keySet) return (
+  // ══ ÉCRAN CLÉ API ════════════════════════════════════════════════════════════
+  if(!keySet) return(
     <div style={{height:"100%",background:"#0a0704",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24,fontFamily:"'EB Garamond',serif"}}>
       <div style={{fontSize:22,fontFamily:"'Cinzel',serif",color:"#c8862a",letterSpacing:2,textAlign:"center",marginBottom:6}}>⚔ SURVIVING<br/>THE DUNGEON</div>
       <div style={{fontSize:11,color:"#7a5030",letterSpacing:3,marginBottom:32,textAlign:"center"}}>AS A BARBARIAN</div>
       <div style={{width:"100%",maxWidth:360}}>
         <div style={{fontSize:13,color:"#a89070",marginBottom:8}}>Clé API Anthropic :</div>
-        <input type="password" value={apiKey} onChange={e=>setApiKey(e.target.value)}
-          onKeyDown={e=>e.key==="Enter"&&apiKey&&saveKey()}
-          placeholder="sk-ant-..."
-          style={{width:"100%",background:"#120a02",border:"1px solid #3a2010",borderRadius:8,color:"#d4b896",padding:"12px 14px",fontSize:14,marginBottom:12,outline:"none"}} />
+        <input type="password" value={apiKey} onChange={e=>setApiKey(e.target.value)} onKeyDown={e=>e.key==="Enter"&&apiKey&&saveKey()} placeholder="sk-ant-..."
+          style={{width:"100%",background:"#120a02",border:"1px solid #3a2010",borderRadius:8,color:"#d4b896",padding:"12px 14px",fontSize:14,marginBottom:12,outline:"none"}}/>
         <div style={{fontSize:11,color:"#5a3818",marginBottom:20,lineHeight:1.7}}>
-          Obtiens ta clé sur <a href="https://console.anthropic.com" target="_blank" style={{color:"#c8862a"}}>console.anthropic.com</a> → API Keys.<br/>
-          Stockée uniquement dans ton navigateur.
+          <a href="https://console.anthropic.com" target="_blank" style={{color:"#c8862a"}}>console.anthropic.com</a> → API Keys → Billing ($5 min)
         </div>
         <button onClick={saveKey} disabled={!apiKey}
           style={{width:"100%",background:apiKey?"linear-gradient(135deg,#8a4a10,#c8762a)":"#1a0e04",border:"1px solid #c8762a",borderRadius:10,color:"#ffd4a0",padding:"13px",cursor:"pointer",fontFamily:"'Cinzel',serif",fontSize:14,letterSpacing:2}}>
@@ -267,253 +505,259 @@ function App() {
     </div>
   );
 
-  // ── UI PRINCIPALE ────────────────────────────────────────────────────────────
-  return (
-    <div style={{height:"100%",display:"flex",flexDirection:"column",background:"#0a0704",fontFamily:"'EB Garamond',serif",color:"#d4b896",overflow:"hidden"}}>
+  const mal=getSurvivalMalus(char);
+  const warnings=getSurvivalStatus(char);
+  const isDanger=char.hp/char.hpMax<0.25||char.hunger<20||char.thirst<20||char.temp<0||char.temp>40;
 
-      {/* NOTIF */}
-      {notif && <div style={{position:"fixed",top:16,left:"50%",transform:"translateX(-50%)",background:"#0e0802",border:"1px solid "+notif.color,borderRadius:20,padding:"6px 18px",fontFamily:"'Cinzel',serif",fontSize:13,color:notif.color,zIndex:999,pointerEvents:"none",whiteSpace:"nowrap",animation:"fadeNotif 2.4s ease forwards"}}>{notif.text}</div>}
+  // ══ UI PRINCIPALE ════════════════════════════════════════════════════════════
+  return(
+    <div style={{height:"100%",display:"flex",flexDirection:"column",background:"#0a0704",fontFamily:"'EB Garamond',serif",color:"#d4b896",overflow:"hidden",animation:isDanger?"danger 2s infinite":undefined}}>
 
-      {/* NOUVELLE COMPÉTENCE */}
-      {showNewSkill && (
-        <div style={{position:"fixed",bottom:80,left:"50%",transform:"translateX(-50%)",background:"#1a0e02",border:"2px solid #c8862a",borderRadius:12,padding:"12px 20px",zIndex:998,animation:"slideIn 0.4s ease",maxWidth:"80%",textAlign:"center"}}>
-          <div style={{fontSize:10,color:"#c8862a",fontFamily:"'Cinzel',serif",letterSpacing:2,marginBottom:4}}>✦ COMPÉTENCE DÉBLOQUÉE</div>
-          <div style={{fontSize:15,color:"#e8d080",fontFamily:"'Cinzel',serif"}}>{showNewSkill.name}</div>
-          <div style={{fontSize:11,color:"#7a5030",marginTop:3}}>{showNewSkill.desc}</div>
-        </div>
-      )}
+      {notif&&<div style={{position:"fixed",top:16,left:"50%",transform:"translateX(-50%)",background:"#0e0802",border:"1px solid "+notif.color,borderRadius:20,padding:"6px 18px",fontFamily:"'Cinzel',serif",fontSize:13,color:notif.color,zIndex:999,pointerEvents:"none",whiteSpace:"nowrap",animation:"fadeNotif 2.6s ease forwards"}}>{notif.text}</div>}
 
-      {/* TOP BAR */}
-      <div style={{background:"#0e0a02",borderBottom:"1px solid #2a1808",padding:"8px 14px",flexShrink:0}}>
-        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
-          <span style={{fontFamily:"'Cinzel',serif",fontSize:15,color:"#e8a84a"}}>{char.name}</span>
-          <span style={{background:"#2a1608",border:"1px solid #c8862a",color:"#c8862a",borderRadius:4,padding:"0 7px",fontSize:10,fontFamily:"'Cinzel',serif"}}>Nv.{char.level}</span>
-          {enemy && <span style={{background:"#2a0404",border:"1px solid #cc3333",color:"#ee4444",borderRadius:4,padding:"0 7px",fontSize:10,fontFamily:"'Cinzel',serif"}}>⚔ COMBAT</span>}
-          <span style={{marginLeft:"auto",fontSize:12,color:"#aa8822"}}>💰{char.gold}</span>
-          {/* BOUTON SAUVEGARDE */}
-          <button onClick={manualSave} style={{background:saveFlash?"#0a2010":"#0e0a02",border:"1px solid "+(saveFlash?"#44aa66":"#2a1808"),borderRadius:6,color:saveFlash?"#44aa66":"#4a2808",padding:"3px 8px",cursor:"pointer",fontSize:11,fontFamily:"'Cinzel',serif",transition:"all 0.3s"}}>
+      {newSkill&&<div style={{position:"fixed",bottom:85,left:"50%",transform:"translateX(-50%)",background:"#1a0e02",border:"2px solid #c8862a",borderRadius:12,padding:"12px 20px",zIndex:998,animation:"slideIn 0.4s ease",maxWidth:"80%",textAlign:"center"}}>
+        <div style={{fontSize:10,color:"#c8862a",fontFamily:"'Cinzel',serif",letterSpacing:2,marginBottom:4}}>✦ COMPÉTENCE DÉBLOQUÉE</div>
+        <div style={{fontSize:15,color:"#e8d080",fontFamily:"'Cinzel',serif"}}>{newSkill.name}</div>
+        <div style={{fontSize:11,color:"#7a5030",marginTop:3}}>{newSkill.desc}</div>
+      </div>}
+
+      {/* ── TOP BAR ─────────────────────────────────────────────────────────── */}
+      <div style={{background:"#0e0a02",borderBottom:"1px solid "+(isDanger?"#5a1010":"#2a1808"),padding:"7px 12px",flexShrink:0}}>
+        <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:5}}>
+          <span style={{fontFamily:"'Cinzel',serif",fontSize:14,color:"#e8a84a"}}>{char.name}</span>
+          <span style={{background:"#2a1608",border:"1px solid #c8862a",color:"#c8862a",borderRadius:4,padding:"0 6px",fontSize:9,fontFamily:"'Cinzel',serif"}}>Nv.{char.level}</span>
+          {enemy&&<span style={{background:"#2a0404",border:"1px solid #cc3333",color:"#ee4444",borderRadius:4,padding:"0 6px",fontSize:9,fontFamily:"'Cinzel',serif"}}>⚔ COMBAT</span>}
+          <span style={{marginLeft:"auto",fontSize:11,color:"#aa8822"}}>💰{char.gold}g</span>
+          <TempBadge temp={char.temp}/>
+          <button onClick={toggleSound} style={{background:"transparent",border:"1px solid #2a1808",borderRadius:6,color:soundOn?"#c8862a":"#3a2808",padding:"2px 7px",cursor:"pointer",fontSize:12}}>
+            {soundOn?"🔊":"🔇"}
+          </button>
+          <button onClick={manualSave} style={{background:saveFlash?"#0a2010":"transparent",border:"1px solid "+(saveFlash?"#44aa66":"#2a1808"),borderRadius:6,color:saveFlash?"#44aa66":"#3a2808",padding:"2px 7px",cursor:"pointer",fontSize:11}}>
             {saveFlash?"✓":"💾"}
           </button>
         </div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
+
+        {/* Barres PV/END/RAGE */}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:5,marginBottom:4}}>
           {[
             {val:char.hp,max:char.hpMax,color:"hsl("+(char.hp/char.hpMax*120)+",80%,30%)",icon:"❤",label:char.hp+"/"+char.hpMax},
             {val:char.stamina,max:char.staminaMax,color:"#1a77bb",icon:"⚡",label:char.stamina+"/"+char.staminaMax},
             {val:char.rage,max:char.rageMax,color:"#cc5500",icon:"🔥",label:char.rage+"/"+char.rageMax},
           ].map((b,i)=>(
             <div key={i}>
-              <div style={{display:"flex",justifyContent:"space-between",fontSize:9,color:"#5a3818",marginBottom:2}}>
-                <span>{b.icon}</span><span>{b.label}</span>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:9,color:"#5a3818",marginBottom:1}}>
+                <span>{b.icon}</span><span style={{color:b.val/b.max<0.25?"#ff4444":"inherit"}}>{b.label}</span>
               </div>
-              <div style={{height:5,background:"#1a1208",borderRadius:3,overflow:"hidden"}}>
-                <div style={{height:"100%",width:Math.max(0,Math.min(100,(b.val/b.max)*100))+"%",background:b.color,transition:"width 0.4s",borderRadius:3}} />
+              <div style={{height:5,background:"#1a1208",borderRadius:2,overflow:"hidden"}}>
+                <div style={{height:"100%",width:Math.max(0,Math.min(100,b.val/b.max*100))+"%",background:b.color,transition:"width 0.4s",borderRadius:2}}/>
               </div>
             </div>
           ))}
         </div>
-        {/* XP BAR */}
-        <div style={{marginTop:5}}>
-          <div style={{height:3,background:"#150a18",borderRadius:2,overflow:"hidden"}}>
-            <div style={{height:"100%",width:Math.min(100,(char.xp/char.xpNext)*100)+"%",background:"#8844cc",transition:"width 0.5s",borderRadius:2}} />
-          </div>
-          <div style={{fontSize:8,color:"#4a2868",marginTop:1,textAlign:"right"}}>XP {char.xp}/{char.xpNext}</div>
+
+        {/* Barres SURVIE */}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:5}}>
+          {[
+            {val:char.hunger,max:char.hungerMax,color:char.hunger<40?"#cc4422":"#885522",icon:"🍖",label:"Faim "+char.hunger+"%"},
+            {val:char.thirst,max:char.thirstMax,color:char.thirst<40?"#2244cc":"#224488",icon:"💧",label:"Soif "+char.thirst+"%"},
+          ].map((b,i)=>(
+            <div key={i}>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:9,color:b.val<40?"#cc5533":"#5a3818",marginBottom:1}}>
+                <span>{b.icon}</span><span>{b.label}</span>
+              </div>
+              <div style={{height:4,background:"#1a1208",borderRadius:2,overflow:"hidden"}}>
+                <div style={{height:"100%",width:Math.max(0,b.val)+"%",background:b.color,transition:"width 0.4s",borderRadius:2}}/>
+              </div>
+            </div>
+          ))}
         </div>
+
+        {/* Warnings survie */}
+        {warnings.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:4,marginTop:5}}>
+          {warnings.map((w,i)=>(
+            <span key={i} style={{fontSize:9,color:w.color,background:w.color+"11",border:"1px solid "+w.color+"44",borderRadius:4,padding:"1px 6px",fontFamily:"'Cinzel',serif",animation:w.blink?"pulse 1s infinite":undefined}}>{w.text}</span>
+          ))}
+        </div>}
+
+        {/* Malus actifs */}
+        {(mal.forMod<0||mal.agiMod<0||mal.endMod<0)&&<div style={{fontSize:9,color:"#884422",marginTop:3}}>
+          ⬇ Malus actifs : {mal.forMod<0?"FOR "+mal.forMod+" ":""}{mal.agiMod<0?"AGI "+mal.agiMod+" ":""}{mal.endMod<0?"END "+mal.endMod:""}
+        </div>}
+
+        {/* XP */}
+        <div style={{marginTop:4,height:3,background:"#150a18",borderRadius:2,overflow:"hidden"}}>
+          <div style={{height:"100%",width:Math.min(100,(char.xp/char.xpNext)*100)+"%",background:"#8844cc",transition:"width 0.5s",borderRadius:2}}/>
+        </div>
+        <div style={{fontSize:8,color:"#4a2868",marginTop:1,textAlign:"right"}}>XP {char.xp}/{char.xpNext}</div>
       </div>
 
-      {/* CONTENT */}
+      {/* ── CONTENT ─────────────────────────────────────────────────────────── */}
       <div style={{flex:1,overflow:"hidden",display:"flex",flexDirection:"column",minHeight:0}}>
 
-        {/* ── JOURNAL ── */}
-        {tab==="journal" && (
+        {tab==="journal"&&(
           <div style={{flex:1,overflowY:"auto",padding:"10px 12px",display:"flex",flexDirection:"column",gap:10}}>
             {messages.map((m,i)=>(
-              <div key={i} style={{
-                alignSelf:m.role==="user"?"flex-end":"flex-start",
-                background:m.role==="user"?"#1a0e04":"#0e0a02",
-                border:"1px solid "+(m.role==="user"?"#3a2010":"#221408"),
-                borderRadius:m.role==="user"?"12px 12px 3px 12px":"12px 12px 12px 3px",
-                padding:"10px 13px",maxWidth:"88%",fontSize:14,lineHeight:1.85,color:m.role==="user"?"#c89060":"#c4a880"
-              }}>
-                {m.role==="assistant"&&(
-                  <div style={{fontSize:9,color:"#5a3818",marginBottom:5,letterSpacing:2,display:"flex",alignItems:"center",flexWrap:"wrap",gap:6}}>
-                    ⚔ MAÎTRE DU DONJON
-                    {m.roll&&<span style={{background:m.rc+"22",border:"1px solid "+m.rc,color:m.rc,borderRadius:4,padding:"0 6px",fontSize:9}}>🎲{m.roll} — {m.rl}</span>}
-                  </div>
-                )}
+              <div key={i} style={{alignSelf:m.role==="user"?"flex-end":"flex-start",background:m.role==="user"?"#1a0e04":"#0e0a02",border:"1px solid "+(m.role==="user"?"#3a2010":"#221408"),borderRadius:m.role==="user"?"12px 12px 3px 12px":"12px 12px 12px 3px",padding:"10px 13px",maxWidth:"88%",fontSize:14,lineHeight:1.85,color:m.role==="user"?"#c89060":"#c4a880"}}>
+                {m.role==="assistant"&&<div style={{fontSize:9,color:"#5a3818",marginBottom:5,letterSpacing:2,display:"flex",alignItems:"center",flexWrap:"wrap",gap:6}}>
+                  ⚔ MAÎTRE DU DONJON
+                  {m.roll&&<span style={{background:m.rc+"22",border:"1px solid "+m.rc,color:m.rc,borderRadius:4,padding:"0 6px",fontSize:9}}>🎲{m.roll} — {m.rl}</span>}
+                </div>}
                 <div style={{whiteSpace:"pre-wrap"}}>{m.text}</div>
               </div>
             ))}
-            {loading&&(
-              <div style={{alignSelf:"flex-start",background:"#0e0a02",border:"1px solid #221408",borderRadius:"12px 12px 12px 3px",padding:"10px 13px",animation:"pulse 1s infinite"}}>
-                <div style={{fontSize:9,color:"#5a3818",marginBottom:4,letterSpacing:2}}>⚔ MAÎTRE DU DONJON</div>
-                <span style={{color:"#3a2808"}}>Le donjon murmure...</span>
-              </div>
-            )}
-            <div ref={endRef} />
+            {loading&&<div style={{alignSelf:"flex-start",background:"#0e0a02",border:"1px solid #221408",borderRadius:"12px 12px 12px 3px",padding:"10px 13px",animation:"pulse 1s infinite"}}>
+              <div style={{fontSize:9,color:"#5a3818",marginBottom:4,letterSpacing:2}}>⚔ MAÎTRE DU DONJON</div>
+              <span style={{color:"#3a2808"}}>Le donjon murmure...</span>
+            </div>}
+            <div ref={endRef}/>
           </div>
         )}
 
-        {/* ── PERSONNAGE ── */}
-        {tab==="perso" && (
-          <div style={{flex:1,overflowY:"auto",padding:"14px"}}>
-            <div style={{fontFamily:"'Cinzel',serif",fontSize:11,color:"#5a3818",letterSpacing:3,marginBottom:10}}>▸ STATISTIQUES</div>
-            <StatBar value={char.hp}      max={char.hpMax}      color="#cc3333" label="VIE"        icon="❤" />
-            <StatBar value={char.stamina} max={char.staminaMax} color="#2288cc" label="ENDURANCE"  icon="⚡" />
-            <StatBar value={char.rage}    max={char.rageMax}    color="#dd6611" label="RAGE"        icon="🔥" />
-            <StatBar value={char.xp}      max={char.xpNext}     color="#8844cc" label="EXPÉRIENCE" icon="✦" />
+        {tab==="perso"&&(
+          <div style={{flex:1,overflowY:"auto",padding:"13px"}}>
+            <div style={{fontFamily:"'Cinzel',serif",fontSize:10,color:"#5a3818",letterSpacing:3,marginBottom:8}}>▸ STATISTIQUES</div>
+            <StatBar value={char.hp}      max={char.hpMax}      color="#cc3333" label="VIE"        icon="❤" warn/>
+            <StatBar value={char.stamina} max={char.staminaMax} color="#2288cc" label="ENDURANCE"  icon="⚡" warn/>
+            <StatBar value={char.rage}    max={char.rageMax}    color="#dd6611" label="RAGE"        icon="🔥"/>
+            <StatBar value={char.xp}      max={char.xpNext}     color="#8844cc" label="EXPÉRIENCE" icon="✦"/>
 
-            <div style={{fontFamily:"'Cinzel',serif",fontSize:11,color:"#5a3818",letterSpacing:3,margin:"16px 0 10px"}}>▸ ATTRIBUTS</div>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginBottom:16}}>
-              {Object.entries(char.stats).map(([k,v])=>(
-                <div key={k} style={{background:"#120a02",border:"1px solid #2a1808",borderRadius:8,padding:"10px 6px",textAlign:"center"}}>
-                  <div style={{fontSize:22,color:"#e8c070",fontFamily:"'Cinzel',serif"}}>{v}</div>
-                  <div style={{fontSize:10,color:"#6a4828",letterSpacing:1}}>{k}</div>
-                </div>
-              ))}
+            <div style={{fontFamily:"'Cinzel',serif",fontSize:10,color:"#5a3818",letterSpacing:3,margin:"12px 0 8px"}}>▸ SURVIE</div>
+            <StatBar value={char.hunger} max={char.hungerMax} color={char.hunger<40?"#cc4422":"#885522"} label={"FAIM (malus FOR "+mal.forMod+")"} icon="🍖" warn/>
+            <StatBar value={char.thirst} max={char.thirstMax} color={char.thirst<40?"#2244cc":"#224488"} label={"SOIF (malus AGI "+mal.agiMod+")"} icon="💧" warn/>
+            <div style={{background:"#0e0a02",border:"1px solid #2a1808",borderRadius:8,padding:"8px 12px",fontSize:12,marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <TempBadge temp={char.temp}/>
+              <span style={{fontSize:10,color:"#5a3818"}}>{char.temp<5?"Gelé — drain PV/END":char.temp>35?"Surchauffé — drain soif/PV":"Température normale"}</span>
             </div>
 
-            <div style={{fontFamily:"'Cinzel',serif",fontSize:11,color:"#5a3818",letterSpacing:3,marginBottom:10}}>▸ INVENTAIRE</div>
-            {char.inventory.length===0 ? (
-              <div style={{background:"#0a0804",border:"1px dashed #2a1808",borderRadius:8,padding:"16px",textAlign:"center",color:"#3a2808",fontSize:13,fontStyle:"italic",marginBottom:14}}>
-                Aucun objet — explore le donjon pour trouver de l'équipement.
-              </div>
-            ) : (
-              <div style={{display:"flex",flexDirection:"column",gap:7,marginBottom:14}}>
+            <div style={{fontFamily:"'Cinzel',serif",fontSize:10,color:"#5a3818",letterSpacing:3,margin:"12px 0 8px"}}>▸ ATTRIBUTS {(mal.forMod<0||mal.agiMod<0)&&<span style={{color:"#cc4422",fontSize:9}}>(malus actifs)</span>}</div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:7,marginBottom:14}}>
+              {Object.entries(char.stats).map(([k,v])=>{
+                const mod = k==="FOR"?mal.forMod:k==="AGI"?mal.agiMod:k==="END"?mal.endMod:0;
+                return(
+                  <div key={k} style={{background:"#120a02",border:"1px solid "+(mod<0?"#4a1808":"#2a1808"),borderRadius:8,padding:"9px 6px",textAlign:"center"}}>
+                    <div style={{fontSize:20,color:mod<0?"#ee6633":"#e8c070",fontFamily:"'Cinzel',serif"}}>{v+mod}</div>
+                    <div style={{fontSize:9,color:"#6a4828",letterSpacing:1}}>{k}{mod<0&&<span style={{color:"#cc4422"}}> ({mod})</span>}</div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div style={{fontFamily:"'Cinzel',serif",fontSize:10,color:"#5a3818",letterSpacing:3,marginBottom:8}}>▸ INVENTAIRE</div>
+            {char.inventory.length===0
+              ?<div style={{background:"#0a0804",border:"1px dashed #2a1808",borderRadius:8,padding:"14px",textAlign:"center",color:"#3a2808",fontSize:12,fontStyle:"italic",marginBottom:12}}>Vide — explore pour trouver eau, nourriture et équipement.</div>
+              :<div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:12}}>
                 {char.inventory.map((it,i)=>(
-                  <div key={i} style={{background:"#0e0a02",border:"1px solid #2a1808",borderRadius:10,padding:"9px 12px",display:"flex",alignItems:"center",gap:10}}>
-                    <span style={{fontSize:22}}>{it.icon}</span>
-                    <div>
-                      <div style={{fontSize:14,color:"#d4a870"}}>{it.name}</div>
-                      <div style={{fontSize:10,color:"#5a3818",letterSpacing:1}}>{(it.type||"").toUpperCase()} — ×{it.qty}</div>
+                  <div key={i} style={{background:"#0e0a02",border:"1px solid #2a1808",borderRadius:10,padding:"8px 12px",display:"flex",alignItems:"center",gap:10}}>
+                    <span style={{fontSize:20}}>{it.icon}</span>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:13,color:"#d4a870"}}>{it.name}</div>
+                      <div style={{fontSize:9,color:"#5a3818",letterSpacing:1}}>{(it.type||"").toUpperCase()} ×{it.qty}</div>
                     </div>
+                    {(it.type==="consumable"||it.type==="food"||it.type==="water")&&it.qty>0&&(
+                      <button onClick={()=>useConsumable(it)} style={{background:"#0a0e04",border:"1px solid #2a4010",borderRadius:6,color:"#88cc44",padding:"4px 8px",cursor:"pointer",fontSize:11}}>
+                        Utiliser
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
-            )}
+            }
 
-            <div style={{background:"#0e0802",border:"1px solid #2a1808",borderRadius:8,padding:"10px 12px",fontSize:13,color:"#a87848",fontStyle:"italic",marginBottom:14}}>
+            <div style={{background:"#0e0802",border:"1px solid #2a1808",borderRadius:8,padding:"8px 12px",fontSize:12,color:"#a87848",fontStyle:"italic",marginBottom:12}}>
               📍 {char.location} — Étage {char.floor}
             </div>
 
-            {/* COMPÉTENCES À VENIR */}
-            <div style={{fontFamily:"'Cinzel',serif",fontSize:11,color:"#5a3818",letterSpacing:3,marginBottom:8}}>▸ COMPÉTENCES À DÉBLOQUER</div>
-            <div style={{display:"flex",flexDirection:"column",gap:5,marginBottom:14}}>
-              {ALL_SKILLS.filter(sk=>!char.skills.find(s=>s.id===sk.id)).map(sk=>(
-                <div key={sk.id} style={{background:"#0a0804",border:"1px dashed #2a1808",borderRadius:8,padding:"8px 12px",opacity:0.6}}>
-                  <div style={{display:"flex",justifyContent:"space-between"}}>
-                    <span style={{fontSize:12,color:"#5a3818",fontFamily:"'Cinzel',serif"}}>{sk.name}</span>
-                    <span style={{fontSize:10,color:"#3a2808"}}>Nv.{sk.unlockLv}</span>
-                  </div>
-                  <div style={{fontSize:10,color:"#3a2808",marginTop:2}}>{sk.desc}</div>
-                </div>
-              ))}
-            </div>
-
-            <div style={{display:"flex",gap:8}}>
-              <button onClick={manualSave}
-                style={{flex:1,background:"#04100a",border:"1px solid #1a4020",borderRadius:8,color:"#44aa66",padding:"10px",cursor:"pointer",fontSize:12,fontFamily:"'Cinzel',serif",letterSpacing:1}}>
-                💾 Sauvegarder
-              </button>
-              <button onClick={resetGame}
-                style={{flex:1,background:"#100404",border:"1px solid #3a1010",borderRadius:8,color:"#884444",padding:"10px",cursor:"pointer",fontSize:12,fontFamily:"'Cinzel',serif",letterSpacing:1}}>
-                🔄 Recommencer
-              </button>
+            <div style={{display:"flex",gap:8,marginBottom:8}}>
+              <button onClick={manualSave} style={{flex:1,background:"#04100a",border:"1px solid #1a4020",borderRadius:8,color:"#44aa66",padding:"9px",cursor:"pointer",fontSize:11,fontFamily:"'Cinzel',serif"}}>💾 Sauvegarder</button>
+              <button onClick={resetGame}  style={{flex:1,background:"#100404",border:"1px solid #3a1010",borderRadius:8,color:"#884444",padding:"9px",cursor:"pointer",fontSize:11,fontFamily:"'Cinzel',serif"}}>🔄 Recommencer</button>
             </div>
             <button onClick={()=>{localStorage.removeItem(APIKEY_KEY);setKeySet(false);setApiKey("");}}
-              style={{width:"100%",background:"#0a0808",border:"1px solid #2a1010",borderRadius:8,color:"#5a3030",padding:"9px",cursor:"pointer",fontSize:11,fontFamily:"'Cinzel',serif",marginTop:8}}>
+              style={{width:"100%",background:"#0a0808",border:"1px solid #2a1010",borderRadius:8,color:"#5a3030",padding:"8px",cursor:"pointer",fontSize:10,fontFamily:"'Cinzel',serif",marginBottom:4}}>
               🔑 Changer la clé API
             </button>
           </div>
         )}
 
-        {/* ── CAPACITÉS ── */}
-        {tab==="skills" && (
-          <div style={{flex:1,overflowY:"auto",padding:"12px",display:"flex",flexDirection:"column",gap:8}}>
-
-            {enemy&&(
-              <div style={{background:"#160404",border:"1px solid #5a1010",borderRadius:10,padding:"12px",marginBottom:4}}>
-                <div style={{fontSize:13,color:"#e84040",fontFamily:"'Cinzel',serif",marginBottom:8}}>☠ COMBAT — {enemy.name}</div>
-                <StatBar value={enemy.hp} max={100} color="#cc2222" label="PV ENNEMI" icon="💀" />
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginTop:8}}>
-                  <button onClick={()=>{setInput("J'attaque "+enemy.name+" à mains nues avec toute ma force !");setTab("journal");}}
-                    style={{background:"#2a0404",border:"1px solid #6a1010",borderRadius:8,color:"#ee4444",padding:"10px",cursor:"pointer",fontSize:13}}>⚔ Attaquer</button>
-                  <button onClick={()=>{setInput("Je tente de fuir le combat contre "+enemy.name+" !");setTab("journal");}}
-                    style={{background:"#1a1404",border:"1px solid #4a3810",borderRadius:8,color:"#aa8844",padding:"10px",cursor:"pointer",fontSize:13}}>🏃 Fuir</button>
-                </div>
+        {tab==="skills"&&(
+          <div style={{flex:1,overflowY:"auto",padding:"12px",display:"flex",flexDirection:"column",gap:7}}>
+            {enemy&&<div style={{background:"#160404",border:"1px solid #5a1010",borderRadius:10,padding:"11px",marginBottom:4}}>
+              <div style={{fontSize:12,color:"#e84040",fontFamily:"'Cinzel',serif",marginBottom:7}}>☠ COMBAT — {enemy.name}</div>
+              <StatBar value={enemy.hp} max={100} color="#cc2222" label="PV ENNEMI" icon="💀" warn/>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginTop:7}}>
+                <button onClick={()=>{setInput("J'attaque "+enemy.name+" de toutes mes forces !");setTab("journal");}}
+                  style={{background:"#2a0404",border:"1px solid #6a1010",borderRadius:8,color:"#ee4444",padding:"9px",cursor:"pointer",fontSize:13}}>⚔ Attaquer</button>
+                <button onClick={()=>{setInput("Je tente de fuir le combat contre "+enemy.name+" !");setTab("journal");}}
+                  style={{background:"#1a1404",border:"1px solid #4a3810",borderRadius:8,color:"#aa8844",padding:"9px",cursor:"pointer",fontSize:13}}>🏃 Fuir</button>
               </div>
-            )}
+            </div>}
 
-            <div style={{fontFamily:"'Cinzel',serif",fontSize:11,color:"#5a3818",letterSpacing:3,marginBottom:2}}>▸ COMPÉTENCES</div>
+            <div style={{fontFamily:"'Cinzel',serif",fontSize:10,color:"#5a3818",letterSpacing:3}}>▸ COMPÉTENCES</div>
+            {char.skills.length===0
+              ?<div style={{background:"#0a0804",border:"1px dashed #2a1808",borderRadius:10,padding:"18px",textAlign:"center",color:"#3a2808",fontSize:12,fontStyle:"italic"}}>Aucune compétence — monte de niveau pour en débloquer.</div>
+              :char.skills.map((sk,i)=>{
+                const dis=sk.type==="rage"?char.rage<sk.cost:char.stamina<sk.cost;
+                return(
+                  <button key={i} onClick={()=>useSkill(sk)} disabled={dis}
+                    style={{background:dis?"#0a0804":"#120a02",border:"1px solid "+(dis?"#1e1408":"#4a2c10"),borderRadius:10,padding:"11px 12px",cursor:dis?"not-allowed":"pointer",color:dis?"#3a2808":"#c89060",fontSize:13,textAlign:"left",width:"100%",opacity:dis?0.5:1}}>
+                    <div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}>
+                      <span style={{fontWeight:600,fontFamily:"'Cinzel',serif",fontSize:11}}>{sk.name}</span>
+                      <span style={{fontSize:10,color:sk.type==="rage"?"#dd6611":"#2288cc"}}>-{sk.cost} {sk.type==="rage"?"🔥":"⚡"}</span>
+                    </div>
+                    <div style={{fontSize:11,color:"#6a4828"}}>{sk.desc}</div>
+                    {sk.dmg!=="—"&&<div style={{fontSize:10,color:"#aa6622",marginTop:2}}>🗡 {sk.dmg}</div>}
+                  </button>
+                );
+              })
+            }
 
-            {char.skills.length===0 ? (
-              <div style={{background:"#0a0804",border:"1px dashed #2a1808",borderRadius:10,padding:"20px",textAlign:"center",color:"#3a2808",fontSize:13,fontStyle:"italic"}}>
-                Aucune compétence.<br/>
-                <span style={{fontSize:11}}>Monte de niveau pour en débloquer.</span>
-              </div>
-            ) : char.skills.map((sk,i)=>{
-              const dis = sk.type==="rage"?char.rage<sk.cost:char.stamina<sk.cost;
-              return (
-                <button key={i} onClick={()=>useSkill(sk)} disabled={dis}
-                  style={{background:dis?"#0a0804":"#120a02",border:"1px solid "+(dis?"#1e1408":"#4a2c10"),borderRadius:10,padding:"12px 13px",cursor:dis?"not-allowed":"pointer",color:dis?"#3a2808":"#c89060",fontSize:13,textAlign:"left",width:"100%",opacity:dis?0.5:1}}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
-                    <span style={{fontWeight:600,fontFamily:"'Cinzel',serif",fontSize:12}}>{sk.name}</span>
-                    <span style={{fontSize:11,color:sk.type==="rage"?"#dd6611":"#2288cc"}}>-{sk.cost} {sk.type==="rage"?"🔥":"⚡"}</span>
-                  </div>
-                  <div style={{fontSize:12,color:"#6a4828"}}>{sk.desc}</div>
-                  {sk.dmg!=="—"&&<div style={{fontSize:11,color:"#aa6622",marginTop:3}}>🗡 {sk.dmg}</div>}
-                </button>
-              );
-            })}
-
-            <div style={{fontFamily:"'Cinzel',serif",fontSize:11,color:"#5a3818",letterSpacing:3,margin:"6px 0 4px"}}>▸ ACTIONS</div>
+            <div style={{fontFamily:"'Cinzel',serif",fontSize:10,color:"#5a3818",letterSpacing:3,marginTop:4}}>▸ ACTIONS</div>
             {[
-              {label:"🧪 Potion de soin (+40 PV) ×"+(char.inventory.find(i=>i.name==="Potion de soin")?.qty||0), action:usePotion, bc:"#2a4010", tc:"#88cc44", dis:!char.inventory.find(i=>i.name==="Potion de soin"&&i.qty>0)},
-              {label:"🌙 Se reposer", action:()=>{setInput("Je cherche un endroit sûr pour me reposer et récupérer.");setTab("journal");}, bc:"#101830", tc:"#4488aa", dis:false},
-              {label:"🗺 Explorer les alentours", action:()=>{setInput("J'explore prudemment les alentours à la recherche de quelque chose d'utile.");setTab("journal");}, bc:"#302810", tc:"#aa9944", dis:false},
-              {label:"👁 Inspecter la zone", action:()=>{setInput("J'inspecte attentivement la zone pour repérer des pièges, ennemis ou objets cachés.");setTab("journal");}, bc:"#102028", tc:"#4499aa", dis:false},
+              {label:"🌙 Se reposer (récupère END — sans consommer faim/soif)",action:()=>{setInput("Je cherche un endroit sûr pour me reposer.");setTab("journal");},bc:"#101830",tc:"#4488aa"},
+              {label:"🗺 Explorer les alentours",action:()=>{setInput("J'explore prudemment les alentours à la recherche de nourriture, eau ou équipement.");setTab("journal");},bc:"#302810",tc:"#aa9944"},
+              {label:"👁 Inspecter la zone",action:()=>{setInput("J'inspecte la zone pour repérer pièges, ennemis et ressources cachées.");setTab("journal");},bc:"#102028",tc:"#4499aa"},
+              {label:"🗣 Chercher un marchand ou PNJ",action:()=>{setInput("Je cherche un marchand, un survivant ou toute autre présence humaine dans les environs.");setTab("journal");},bc:"#201030",tc:"#8866aa"},
             ].map((a,i)=>(
-              <button key={i} onClick={a.action} disabled={a.dis}
-                style={{background:"#0e0a02",border:"1px solid "+a.bc,borderRadius:10,color:a.dis?"#3a3020":a.tc,padding:"11px 13px",cursor:a.dis?"not-allowed":"pointer",fontSize:13,textAlign:"left",opacity:a.dis?0.4:1}}>
+              <button key={i} onClick={a.action}
+                style={{background:"#0e0a02",border:"1px solid "+a.bc,borderRadius:10,color:a.tc,padding:"10px 12px",cursor:"pointer",fontSize:13,textAlign:"left"}}>
                 {a.label}
               </button>
             ))}
 
-            <div style={{background:"#0a0a08",border:"1px solid #1e1e10",borderRadius:8,padding:"10px 12px",marginTop:4}}>
-              <div style={{fontSize:10,color:"#4a3808",fontFamily:"'Cinzel',serif",letterSpacing:2,marginBottom:6}}>▸ SYSTÈME D100</div>
-              <div style={{fontSize:12,color:"#4a3808",lineHeight:2.1}}>
-                🎲 &gt;80 → Critique !&nbsp;&nbsp;🎲 51–79 → Succès<br/>
-                🎲 21–50 → Échec&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;🎲 ≤20 → Désastre !
+            <div style={{background:"#0a0a08",border:"1px solid #1e1e10",borderRadius:8,padding:"9px 12px",marginTop:2}}>
+              <div style={{fontSize:9,color:"#4a3808",fontFamily:"'Cinzel',serif",letterSpacing:2,marginBottom:5}}>▸ RÈGLES DE SURVIE</div>
+              <div style={{fontSize:11,color:"#4a3808",lineHeight:1.9}}>
+                🍖 Faim 0% → -5 PV/action<br/>
+                💧 Soif 0% → -8 PV/action + stamina=0<br/>
+                🥶 Temp &lt;0°C → -6 PV/action<br/>
+                🔥 Temp &gt;40°C → -4 PV + soif rapide<br/>
+                🎲 D100 : 80+=Crit | 51-79=Succès | 21-50=Échec | ≤20=Désastre
               </div>
             </div>
           </div>
         )}
       </div>
 
-      {/* INPUT */}
-      {tab==="journal" && (
-        <div style={{padding:"8px 10px",background:"#0a0702",borderTop:"1px solid #1e1208",flexShrink:0,display:"flex",gap:8}}>
+      {/* ── INPUT ───────────────────────────────────────────────────────────── */}
+      {tab==="journal"&&(
+        <div style={{padding:"7px 10px",background:"#0a0702",borderTop:"1px solid #1e1208",flexShrink:0,display:"flex",gap:7}}>
           <input ref={inputRef}
-            style={{flex:1,background:"#120a02",border:"1px solid #3a2010",borderRadius:10,color:"#d4b896",padding:"10px 13px",fontSize:14,outline:"none"}}
+            style={{flex:1,background:"#120a02",border:"1px solid "+(dead?"#5a1010":"#3a2010"),borderRadius:10,color:dead?"#5a2020":"#d4b896",padding:"10px 12px",fontSize:14,outline:"none"}}
             value={input} onChange={e=>setInput(e.target.value)}
             onKeyDown={e=>e.key==="Enter"&&!e.shiftKey&&send()}
-            placeholder="Que fais-tu, barbare ?" disabled={loading} />
-          <button onClick={send} disabled={loading}
-            style={{background:loading?"#1a0e04":"linear-gradient(135deg,#8a4a10,#c8762a)",border:"1px solid #c8762a",borderRadius:10,color:"#ffd4a0",padding:"10px 16px",cursor:"pointer",fontFamily:"'Cinzel',serif",fontSize:12,letterSpacing:1,flexShrink:0}}>
-            {loading?"...":"AGIR"}
+            placeholder={dead?"☠ Bjorn est mort. Recommence.":"Que fais-tu, barbare ?"} disabled={loading||dead}/>
+          <button onClick={dead?resetGame:send} disabled={loading&&!dead}
+            style={{background:dead?"#3a0404":loading?"#1a0e04":"linear-gradient(135deg,#8a4a10,#c8762a)",border:"1px solid "+(dead?"#aa2222":"#c8762a"),borderRadius:10,color:"#ffd4a0",padding:"10px 14px",cursor:"pointer",fontFamily:"'Cinzel',serif",fontSize:11,letterSpacing:1,flexShrink:0}}>
+            {dead?"↺":loading?"...":"AGIR"}
           </button>
         </div>
       )}
 
-      {/* BOTTOM NAV */}
+      {/* ── NAV ─────────────────────────────────────────────────────────────── */}
       <div style={{display:"flex",background:"#0c0804",borderTop:"1px solid #2a1808",flexShrink:0}}>
-        {[
-          {id:"journal", icon:"📜", label:"Journal"},
-          {id:"skills",  icon:"⚔️",  label:"Capacités"},
-          {id:"perso",   icon:"🧍",  label:"Personnage"},
-        ].map(t=>(
+        {[{id:"journal",icon:"📜",label:"Journal"},{id:"skills",icon:"⚔️",label:"Capacités"},{id:"perso",icon:"🧍",label:"Personnage"}].map(t=>(
           <button key={t.id} onClick={()=>setTab(t.id)}
-            style={{flex:1,background:"transparent",border:"none",borderTop:"2px solid "+(tab===t.id?"#c8762a":"transparent"),padding:"9px 4px 7px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
-            <span style={{fontSize:20}}>{t.icon}</span>
+            style={{flex:1,background:"transparent",border:"none",borderTop:"2px solid "+(tab===t.id?"#c8762a":"transparent"),padding:"8px 4px 6px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+            <span style={{fontSize:19}}>{t.icon}</span>
             <span style={{fontSize:9,color:tab===t.id?"#c8762a":"#4a2808",fontFamily:"'Cinzel',serif",letterSpacing:1}}>{t.label}</span>
           </button>
         ))}
@@ -522,7 +766,7 @@ function App() {
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
 </script>
 </body>
 </html>
