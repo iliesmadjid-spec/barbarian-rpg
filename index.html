@@ -24,7 +24,7 @@
 const {useState,useEffect,useRef,useCallback} = React;
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SOUND ENGINE — Web Audio API procédural
+// SOUND ENGINE v2 — fréquences audibles, pas de beep répétitif
 // ═══════════════════════════════════════════════════════════════════════════════
 class SoundEngine {
   constructor(){ this.ctx=null; this.master=null; this.nodes=[]; this.mode=null; this.enabled=true; }
@@ -33,7 +33,7 @@ class SoundEngine {
     if(this.ctx) return;
     this.ctx = new (window.AudioContext||window.webkitAudioContext)();
     this.master = this.ctx.createGain();
-    this.master.gain.value = 0.18;
+    this.master.gain.value = 0.14;
     this.master.connect(this.ctx.destination);
   }
 
@@ -42,56 +42,52 @@ class SoundEngine {
     this.nodes=[];
   }
 
-  noise(freq=200, q=1, vol=0.05, type="sawtooth"){
-    if(!this.ctx||!this.enabled) return null;
-    const osc=this.ctx.createOscillator();
-    const gain=this.ctx.createGain();
-    const filter=this.ctx.createBiquadFilter();
-    filter.type="lowpass"; filter.frequency.value=freq; filter.Q.value=q;
-    osc.type=type; osc.frequency.value=freq*0.5;
-    gain.gain.value=vol;
-    osc.connect(filter); filter.connect(gain); gain.connect(this.master);
-    osc.start(); this.nodes.push(osc,gain,filter); return {osc,gain,filter};
-  }
-
-  droneLayer(freq,vol,detune=0){
+  // Drone continu avec vibrato lent — fréquences audibles 100-300Hz
+  drone(freq, vol, lfoRate=0.12, lfoDepth=3){
     if(!this.ctx||!this.enabled) return;
     const osc=this.ctx.createOscillator();
+    const lfo=this.ctx.createOscillator();
+    const lfoG=this.ctx.createGain();
     const gain=this.ctx.createGain();
-    osc.type="sine"; osc.frequency.value=freq; osc.detune.value=detune;
+    const filt=this.ctx.createBiquadFilter();
+    filt.type="lowpass"; filt.frequency.value=freq*4; filt.Q.value=0.7;
+    lfo.frequency.value=lfoRate; lfoG.gain.value=lfoDepth;
+    lfo.connect(lfoG); lfoG.connect(osc.frequency);
+    osc.type="triangle"; osc.frequency.value=freq;
     gain.gain.value=0;
-    gain.gain.linearRampToValueAtTime(vol,this.ctx.currentTime+3);
-    osc.connect(gain); gain.connect(this.master);
-    osc.start(); this.nodes.push(osc,gain);
+    gain.gain.linearRampToValueAtTime(vol, this.ctx.currentTime+2.5);
+    osc.connect(filt); filt.connect(gain); gain.connect(this.master);
+    osc.start(); lfo.start();
+    this.nodes.push(osc,lfo,lfoG,gain,filt);
   }
 
-  pulse(freq,interval,vol=0.08){
+  // Souffle grave (bruit filtré) — ambiance souterraine
+  wind(freq, vol){
     if(!this.ctx||!this.enabled) return;
-    const tick=()=>{
-      if(!this.enabled) return;
-      const osc=this.ctx.createOscillator();
-      const gain=this.ctx.createGain();
-      osc.type="triangle"; osc.frequency.value=freq;
-      gain.gain.setValueAtTime(vol,this.ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001,this.ctx.currentTime+0.3);
-      osc.connect(gain); gain.connect(this.master);
-      osc.start(); osc.stop(this.ctx.currentTime+0.35);
-    };
-    tick();
-    const id=setInterval(tick,interval);
-    this.nodes.push({stop:()=>clearInterval(id)});
+    const buf=this.ctx.createBuffer(1,this.ctx.sampleRate*2,this.ctx.sampleRate);
+    const d=buf.getChannelData(0);
+    for(let i=0;i<d.length;i++) d[i]=(Math.random()*2-1)*0.3;
+    const src=this.ctx.createBufferSource(); src.buffer=buf; src.loop=true;
+    const filt=this.ctx.createBiquadFilter(); filt.type="bandpass"; filt.frequency.value=freq; filt.Q.value=0.8;
+    const gain=this.ctx.createGain(); gain.gain.value=vol;
+    src.connect(filt); filt.connect(gain); gain.connect(this.master);
+    src.start(); this.nodes.push(src,filt,gain);
   }
 
+  // Goutte d'eau irrégulière
   drip(){
     if(!this.ctx||!this.enabled) return;
     const sched=()=>{
-      const delay=(2+Math.random()*6)*1000;
+      if(!this.enabled) return;
+      const delay=(4+Math.random()*9)*1000;
       const t=setTimeout(()=>{
         if(!this.enabled) return;
         const osc=this.ctx.createOscillator();
         const gain=this.ctx.createGain();
-        osc.type="sine"; osc.frequency.value=800+Math.random()*400;
-        gain.gain.setValueAtTime(0.06,this.ctx.currentTime);
+        const f=350+Math.random()*200;
+        osc.type="sine"; osc.frequency.setValueAtTime(f,this.ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(f*0.5,this.ctx.currentTime+0.35);
+        gain.gain.setValueAtTime(0.07,this.ctx.currentTime);
         gain.gain.exponentialRampToValueAtTime(0.001,this.ctx.currentTime+0.4);
         osc.connect(gain); gain.connect(this.master);
         osc.start(); osc.stop(this.ctx.currentTime+0.45);
@@ -102,41 +98,55 @@ class SoundEngine {
     sched();
   }
 
-  setMode(mode,hp=100,hpMax=100){
+  // Tension rythmique — volume qui ondule lentement (pas de beep !)
+  throb(freq, vol, rate){
     if(!this.ctx||!this.enabled) return;
-    if(mode===this.mode && !(hp/hpMax<0.25)) return;
-    this.stop(); this.mode=mode;
-    const danger = hp/hpMax<0.25;
+    const osc=this.ctx.createOscillator();
+    const lfo=this.ctx.createOscillator();
+    const lfoG=this.ctx.createGain();
+    const gain=this.ctx.createGain();
+    osc.type="sawtooth"; osc.frequency.value=freq;
+    lfo.frequency.value=rate; lfoG.gain.value=vol*0.7;
+    gain.gain.value=vol*0.3;
+    lfo.connect(lfoG); lfoG.connect(gain.gain);
+    osc.connect(gain); gain.connect(this.master);
+    osc.start(); lfo.start();
+    this.nodes.push(osc,lfo,lfoG,gain);
+  }
+
+  setMode(mode, hp=100, hpMax=100){
+    if(!this.ctx||!this.enabled) return;
+    const key=mode+(hp/hpMax<0.3?"_crit":"");
+    if(key===this.mode) return;
+    this.stop(); this.mode=key;
 
     if(mode==="explore"){
-      this.droneLayer(40,0.12);        // grondement profond
-      this.droneLayer(60,0.06,5);      // harmonique
-      this.droneLayer(80,0.04,-3);
-      this.drip();                     // gouttes d'eau
-      if(danger) this.pulse(55,1200,0.1);
+      this.drone(130,0.07,0.12,4);   // fondamental grave
+      this.drone(195,0.04,0.18,2);   // quinte
+      this.wind(180,0.04);            // souffle souterrain
+      this.drip();                    // gouttes
+      if(hp/hpMax<0.3) this.drone(110,0.09,1.8,12); // tension danger
     } else if(mode==="combat"){
-      this.droneLayer(50,0.15);
-      this.droneLayer(75,0.10,8);
-      this.droneLayer(100,0.07,-5);
-      this.pulse(60,600,0.12);         // battement rapide
-      this.noise(300,2,0.04,"sawtooth");
-      if(danger) this.pulse(40,400,0.15);
+      this.drone(110,0.10,0.9,8);
+      this.drone(165,0.06,1.4,5);
+      this.throb(82,0.08,1.6);        // battement de tension (ondulation lente)
+      this.wind(200,0.05);
+      if(hp/hpMax<0.3) this.drone(88,0.12,2.5,14);
     } else if(mode==="rest"){
-      this.droneLayer(35,0.08);
-      this.droneLayer(52,0.05,3);
-      this.droneLayer(70,0.03);
+      this.drone(146,0.05,0.06,1.5);
+      this.drone(220,0.03,0.09,1);
       this.drip();
     } else if(mode==="danger"){
-      this.droneLayer(45,0.18);
-      this.pulse(50,900,0.14);
-      this.noise(200,3,0.06,"sawtooth");
+      this.drone(98,0.13,2.2,12);
+      this.drone(147,0.07,2.8,8);
+      this.throb(73,0.07,2.0);
     } else if(mode==="dead"){
-      this.droneLayer(30,0.2);
-      this.noise(100,1,0.08,"sine");
+      this.drone(98,0.14,0.04,2);
+      this.wind(120,0.06);
     }
   }
 
-  toggle(v){ this.enabled=v; if(!v) this.stop(); else this.setMode(this.mode||"explore"); }
+  toggle(v){ this.enabled=v; if(!v) this.stop(); else if(this.ctx) this.setMode(this.mode?.replace("_crit","")||"explore"); }
 }
 const SE = new SoundEngine();
 
@@ -161,7 +171,10 @@ const INITIAL_CHAR={
   // SURVIE
   hunger:100,hungerMax:100,
   thirst:100,thirstMax:100,
-  temp:18, // °C — normal = 10-25
+  temp:12, // °C — donjon froid
+  // TEMPS
+  hour:6,day:1,month:1, // 6h00, Jour 1, Mois 1
+  unconscious:false,
 };
 
 const SYSTEM_PROMPT=`Tu es le Maître du Jeu d'un RPG BRUTAL basé sur "Surviving the Game as a Barbarian".
@@ -178,18 +191,19 @@ RÈGLES FONDAMENTALES :
 - Ton : brutal, viscéral, sans pitié. Max 4 phrases.
 
 RÈGLES DE SURVIE — hungerChange et thirstChange DOIVENT refléter la logique de l'action :
-- Se reposer / dormir         → faim: 0   soif: 0    (corps au repos, aucune consommation)
-- Parler / observer / attendre → faim: 0   soif: 0    (aucune consommation — immobile)
-- Marcher / explorer           → faim: -5  soif: -6   (effort modéré)
-- Combat court (<3 rounds)     → faim: -8  soif: -12  (effort intense)
-- Combat long / sprint / fuite → faim: -12 soif: -18  (effort extrême)
-- Utiliser une compétence rage → faim: -10 soif: -15  (effort maximal)
-- Manger (loot food)           → faim: +25 à +40 selon nourriture
-- Boire (loot water)           → soif: +30 à +50 selon quantité
-- Zone chaude (>35°C)          → soif supplémentaire -5 à -10
-- Zone froide (<5°C)           → soif -2 mais temp baisse
+- Se reposer / dormir          → faim: 0   soif: 0   temps: +6h  (métabolisme au repos)
+- Parler / observer / attendre → faim: 0   soif: 0   temps: +10min
+- Marcher / explorer           → faim: -3  soif: -3  temps: +30min
+- Combat court (<3 rounds)     → faim: -4  soif: -6  temps: +10min
+- Combat long / sprint / fuite → faim: -6  soif: -9  temps: +20min
+- Utiliser une compétence rage → faim: -5  soif: -7  temps: +10min
+- Manger (loot food)           → faim: +25 à +40, temps: +15min
+- Boire (loot water)           → soif: +30 à +50, temps: +5min
+- Zone chaude >35°C            → soif -4 supplémentaire
+- Zone froide <5°C             → temp baisse de -2 à -5
 
-TOUJOURS calculer hungerChange et thirstChange selon l'action réelle. Ne jamais mettre 0 sauf dialogue immobile.
+TOUJOURS fournir hungerChange, thirstChange, timeChange selon l'action réelle.
+timeChange = nombre de minutes écoulées (ex: 30 pour 30min, 360 pour 6h, 600 pour 10h).
 
 FORMAT JSON OBLIGATOIRE dans un bloc \`\`\`json\`\`\` AVANT le texte :
 {
@@ -200,9 +214,10 @@ FORMAT JSON OBLIGATOIRE dans un bloc \`\`\`json\`\`\` AVANT le texte :
   "rageChange": <nombre>,
   "goldChange": <nombre>,
   "xpGain": <nombre>,
-  "hungerChange": <nombre — OBLIGATOIRE, jamais null>,
-  "thirstChange": <nombre — OBLIGATOIRE, jamais null>,
+  "hungerChange": <nombre — OBLIGATOIRE>,
+  "thirstChange": <nombre — OBLIGATOIRE>,
   "tempChange": <variation °C ou 0>,
+  "timeChange": <minutes écoulées — OBLIGATOIRE, min 5>,
   "event": <"combat"|"explore"|"dialogue"|"loot"|"rest"|null>,
   "enemyHp": <null ou 0-100>,
   "enemyName": <null ou string>,
@@ -217,36 +232,43 @@ function clamp(v,mn,mx){return Math.max(mn,Math.min(mx,v));}
 
 function getSurvivalMalus(char){
   let forMod=0,agiMod=0,endMod=0,hpDrain=0,staDrain=0;
-  // FAIM
-  if(char.hunger<20){forMod-=8;endMod-=6;hpDrain+=5;staDrain+=10;}
-  else if(char.hunger<40){forMod-=4;endMod-=3;staDrain+=5;}
-  else if(char.hunger<70){forMod-=2;endMod-=1;}
-  // SOIF
-  if(char.thirst<20){agiMod-=8;hpDrain+=8;staDrain+=15;}
-  else if(char.thirst<40){agiMod-=4;staDrain+=8;}
-  else if(char.thirst<70){agiMod-=2;}
+  // FAIM — drains réduits
+  if(char.hunger<=0){forMod-=10;endMod-=8;hpDrain+=3;staDrain+=8;}
+  else if(char.hunger<20){forMod-=6;endMod-=4;staDrain+=5;}
+  else if(char.hunger<40){forMod-=3;endMod-=2;}
+  else if(char.hunger<60){forMod-=1;}
+  // SOIF — drains réduits
+  if(char.thirst<=0){agiMod-=10;hpDrain+=5;staDrain+=12;}
+  else if(char.thirst<20){agiMod-=5;staDrain+=6;}
+  else if(char.thirst<40){agiMod-=2;}
   // TEMPÉRATURE
-  if(char.temp<0){hpDrain+=6;staDrain+=10;}
-  else if(char.temp<5){hpDrain+=3;staDrain+=5;}
-  else if(char.temp>40){hpDrain+=4;char.thirstChange=-5;}
-  else if(char.temp>35){staDrain+=5;}
+  if(char.temp<0){hpDrain+=4;staDrain+=6;}
+  else if(char.temp<5){hpDrain+=2;staDrain+=3;}
+  else if(char.temp>40){hpDrain+=3;staDrain+=4;}
+  else if(char.temp>35){staDrain+=3;}
+  // ENDURANCE FAIBLE — malus physique
+  if(char.stamina<=0){forMod-=12;agiMod-=12;}
+  else if(char.stamina/char.staminaMax<0.2){forMod-=5;agiMod-=4;}
   return {forMod,agiMod,endMod,hpDrain,staDrain};
 }
 
 function getSurvivalStatus(char){
   const warnings=[];
-  if(char.hunger<=0)   warnings.push({text:"💀 FAMINE — PV en chute !",color:"#ff2222",blink:true});
-  else if(char.hunger<20) warnings.push({text:"💀 FAMINE CRITIQUE",color:"#ff4444",blink:true});
+  if(char.unconscious)  warnings.push({text:"💤 INCONSCIENT — END à zéro",color:"#aaaaff",blink:true});
+  if(char.hunger<=0)    warnings.push({text:"💀 FAMINE — PV en chute !",color:"#ff2222",blink:true});
+  else if(char.hunger<20) warnings.push({text:"💀 Famine critique",color:"#ff4444",blink:true});
   else if(char.hunger<40) warnings.push({text:"🍖 Affamé",color:"#cc6622"});
-  else if(char.hunger<70) warnings.push({text:"🍖 Faim",color:"#aa7733"});
-  if(char.thirst<=0)   warnings.push({text:"💀 DÉSHYDRATATION — PV en chute !",color:"#ff2222",blink:true});
-  else if(char.thirst<20) warnings.push({text:"💀 DÉSHYDRATATION CRITIQUE",color:"#2299ff",blink:true});
+  else if(char.hunger<60) warnings.push({text:"🍖 Faim",color:"#aa7733"});
+  if(char.thirst<=0)    warnings.push({text:"💀 DÉSHYDRATATION — PV en chute !",color:"#ff2222",blink:true});
+  else if(char.thirst<20) warnings.push({text:"💀 Déshydratation critique",color:"#2299ff",blink:true});
   else if(char.thirst<40) warnings.push({text:"💧 Assoiffé",color:"#2277cc"});
-  else if(char.thirst<70) warnings.push({text:"💧 Soif",color:"#2266aa"});
-  if(char.temp<0)   warnings.push({text:"🥶 HYPOTHERMIE — PV en chute !",color:"#88ccff",blink:true});
+  else if(char.thirst<60) warnings.push({text:"💧 Soif",color:"#2266aa"});
+  if(char.temp<0)    warnings.push({text:"🥶 HYPOTHERMIE — PV en chute !",color:"#88ccff",blink:true});
   else if(char.temp<5)  warnings.push({text:"🥶 Gelé",color:"#66aaee"});
   else if(char.temp>40) warnings.push({text:"🔥 COUP DE CHALEUR — PV en chute !",color:"#ff8822",blink:true});
   else if(char.temp>35) warnings.push({text:"🔥 Surchauffé",color:"#ee6622"});
+  if(char.stamina<=0)   warnings.push({text:"💤 Inconscient !",color:"#aaaaff",blink:true});
+  else if(char.stamina/char.staminaMax<0.2) warnings.push({text:"⚡ Épuisé — malus physique",color:"#4488cc"});
   return warnings;
 }
 
@@ -297,6 +319,7 @@ function App(){
   const [newSkill,setNewSkill]=useState(null);
   const [soundOn,setSoundOn]=useState(false);
   const [dead,setDead]=useState(false);
+  const [unconscious,setUnconscious]=useState(()=>{ try{const s=localStorage.getItem("stb_save_v3");return s?JSON.parse(s).char?.unconscious||false:false;}catch{return false;} });
   const endRef=useRef(null);
   const history=useRef([]);
   const inputRef=useRef(null);
@@ -310,14 +333,23 @@ function App(){
 
   useEffect(()=>{if(tab==="journal")endRef.current?.scrollIntoView({behavior:"smooth"});},[messages,tab]);
 
-  // ── DEATH CHECK ──────────────────────────────────────────────────────────────
+  // ── DEATH / UNCONSCIOUS CHECK ───────────────────────────────────────────────
   useEffect(()=>{
     if(char.hp<=0&&!dead){
-      setDead(true);
-      SE.setMode("dead");
-      setMessages(p=>[...p,{role:"assistant",text:"☠ BJORN EST MORT. La faim, la soif, le froid ou les coups ont eu raison de toi. Le donjon n'a aucune pitié. Recommence depuis le début.",roll:null}]);
+      setDead(true); setUnconscious(false);
+      SE.setMode("dead",0,1);
+      setMessages(p=>[...p,{role:"assistant",text:"☠ BJORN EST MORT. La faim, la soif, le froid ou les coups ont eu raison de toi. Le donjon n'a aucune pitié. Recommence.",roll:null}]);
     }
   },[char.hp]);
+
+  useEffect(()=>{
+    if(char.unconscious && !unconscious){
+      setUnconscious(true);
+      SE.setMode("danger",char.hp,char.hpMax);
+      setMessages(p=>[...p,{role:"assistant",text:"⚠️ Bjorn s'effondre, à bout de forces. Il est inconscient. Ses yeux se ferment malgré lui...",roll:null}]);
+    }
+    if(!char.unconscious && unconscious) setUnconscious(false);
+  },[char.unconscious]);
 
   // ── SON ──────────────────────────────────────────────────────────────────────
   const updateSound=(mode,hp,hpMax)=>{
@@ -373,8 +405,8 @@ function App(){
     if(d.goldChange)    c.gold    =Math.max(0,c.gold+d.goldChange);
 
     // SURVIE
-    const hungerCost = (d.hungerChange !== undefined && d.hungerChange !== null) ? d.hungerChange : -2;
-    const thirstCost = (d.thirstChange !== undefined && d.thirstChange !== null) ? d.thirstChange : -2;
+    const hungerCost = (d.hungerChange !== undefined && d.hungerChange !== null) ? d.hungerChange : 0;
+    const thirstCost = (d.thirstChange !== undefined && d.thirstChange !== null) ? d.thirstChange : 0;
     const tempDelta  = d.tempChange   !== undefined ? d.tempChange  : 0;
     c.hunger = clamp(c.hunger + hungerCost, 0, c.hungerMax);
     c.thirst = clamp(c.thirst + thirstCost, 0, c.thirstMax);
@@ -410,14 +442,16 @@ function App(){
 
   // ── ENVOYER MESSAGE ──────────────────────────────────────────────────────────
   const send=async()=>{
-    if(!input.trim()||loading||dead)return;
+    if(!input.trim()||loading||dead||char.unconscious)return;
     const txt=input.trim(); setInput(""); setLoad(true);
     setMessages(p=>[...p,{role:"user",text:txt}]);
     history.current.push({role:"user",content:txt});
 
     const mal=getSurvivalMalus(char);
     const inv=char.inventory.length>0?char.inventory.map(i=>i.icon+i.name+"×"+i.qty).join(", "):"AUCUN";
-    const ctx=`[PV:${char.hp}/${char.hpMax} END:${char.stamina}/${char.staminaMax} RAGE:${char.rage}/${char.rageMax} Or:${char.gold}g Nv:${char.level} | Lieu:${char.location} | Faim:${char.hunger}% Soif:${char.thirst}% Temp:${char.temp}°C | FOR:${char.stats.FOR+mal.forMod}(${mal.forMod<0?mal.forMod:"+0"}) AGI:${char.stats.AGI+mal.agiMod}(${mal.agiMod<0?mal.agiMod:"+0"}) | Inventaire:${inv}${enemy?" | COMBAT vs "+enemy.name+" (PV:"+enemy.hp+"/100)":""}]`;
+    const hh=String(char.hour).padStart(2,"0")+":00";
+    const dateStr="Jour "+char.day+" Mois "+char.month+" | "+hh;
+    const ctx=`[${dateStr} | PV:${char.hp}/${char.hpMax} END:${char.stamina}/${char.staminaMax} RAGE:${char.rage}/${char.rageMax} Or:${char.gold}g Nv:${char.level}${char.unconscious?" | INCONSCIENT":""} | Lieu:${char.location} | Faim:${char.hunger}% Soif:${char.thirst}% Temp:${char.temp}°C | FOR:${char.stats.FOR+mal.forMod} AGI:${char.stats.AGI+mal.agiMod} | Inventaire:${inv}${enemy?" | COMBAT vs "+enemy.name+" (PV:"+enemy.hp+"/100)":""}]`;
 
     try{
       const res=await fetch("https://api.anthropic.com/v1/messages",{
@@ -527,7 +561,9 @@ function App(){
           <span style={{fontFamily:"'Cinzel',serif",fontSize:14,color:"#e8a84a"}}>{char.name}</span>
           <span style={{background:"#2a1608",border:"1px solid #c8862a",color:"#c8862a",borderRadius:4,padding:"0 6px",fontSize:9,fontFamily:"'Cinzel',serif"}}>Nv.{char.level}</span>
           {enemy&&<span style={{background:"#2a0404",border:"1px solid #cc3333",color:"#ee4444",borderRadius:4,padding:"0 6px",fontSize:9,fontFamily:"'Cinzel',serif"}}>⚔ COMBAT</span>}
-          <span style={{marginLeft:"auto",fontSize:11,color:"#aa8822"}}>💰{char.gold}g</span>
+          {char.unconscious&&<span style={{background:"#0a0a2a",border:"1px solid #aaaaff",color:"#aaaaff",borderRadius:4,padding:"0 6px",fontSize:9,fontFamily:"'Cinzel',serif",animation:"pulse 1s infinite"}}>💤 INCONSCIENT</span>}
+          <span style={{marginLeft:"auto",fontSize:10,color:"#7a6030",fontFamily:"'Cinzel',serif"}}>J{char.day} M{char.month} | {String(char.hour).padStart(2,"0")}h</span>
+          <span style={{fontSize:11,color:"#aa8822"}}>💰{char.gold}g</span>
           <TempBadge temp={char.temp}/>
           <button onClick={toggleSound} style={{background:"transparent",border:"1px solid #2a1808",borderRadius:6,color:soundOn?"#c8862a":"#3a2808",padding:"2px 7px",cursor:"pointer",fontSize:12}}>
             {soundOn?"🔊":"🔇"}
@@ -744,10 +780,10 @@ function App(){
             style={{flex:1,background:"#120a02",border:"1px solid "+(dead?"#5a1010":"#3a2010"),borderRadius:10,color:dead?"#5a2020":"#d4b896",padding:"10px 12px",fontSize:14,outline:"none"}}
             value={input} onChange={e=>setInput(e.target.value)}
             onKeyDown={e=>e.key==="Enter"&&!e.shiftKey&&send()}
-            placeholder={dead?"☠ Bjorn est mort. Recommence.":"Que fais-tu, barbare ?"} disabled={loading||dead}/>
+            placeholder={dead?"☠ Bjorn est mort. Recommence.":char.unconscious?"💤 Bjorn est inconscient...":"Que fais-tu, barbare ?"} disabled={loading||dead||char.unconscious}/>
           <button onClick={dead?resetGame:send} disabled={loading&&!dead}
             style={{background:dead?"#3a0404":loading?"#1a0e04":"linear-gradient(135deg,#8a4a10,#c8762a)",border:"1px solid "+(dead?"#aa2222":"#c8762a"),borderRadius:10,color:"#ffd4a0",padding:"10px 14px",cursor:"pointer",fontFamily:"'Cinzel',serif",fontSize:11,letterSpacing:1,flexShrink:0}}>
-            {dead?"↺":loading?"...":"AGIR"}
+            {dead?"↺":char.unconscious?"💤":loading?"...":"AGIR"}
           </button>
         </div>
       )}
