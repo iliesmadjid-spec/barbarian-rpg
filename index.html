@@ -273,11 +273,16 @@ RÈGLES FONDAMENTALES :
 - Les PNJs sont méfiants. Pas de filet de sécurité.
 - Ton : brutal, viscéral, sans pitié. Max 4 phrases.
 
-RÈGLES DE COMBAT IMPORTANTES :
-- Le client calcule les dés et les dégâts. Le contexte te donnera [ROLL:X] avec le résultat.
-- Tu dois NARRATIVEMENT décrire ce qui se passe selon ce roll (critique=exploit, désastre=catastrophe).
-- En combat : fournis TOUJOURS enemyName (le nom exact de l'ennemi actuel) et enemyHp (PV restants après les dégâts calculés indiqués dans le contexte).
-- hpChange doit refléter les dégâts subis par Bjorn (négatif), jamais 0 en combat sauf si esquive totale.
+RÈGLES DE DÉS — OBLIGATOIRE :
+- Le contexte te fournit TOUJOURS [ROLL:X=RÉSULTAT] pour chaque action.
+- Tu DOIS narrer l'action en cohérence STRICTE avec ce résultat :
+  * CRITIQUE (80+) : exploit total, résultat bien au-delà des espérances
+  * SUCCÈS (51-79) : action réussie, résultat positif mais parfois partiel
+  * ÉCHEC (21-50)  : action ratée, conséquences négatives ou neutres
+  * DÉSASTRE (≤20) : catastrophe, pire scénario possible
+- Ne jamais décrire un succès si le roll indique ÉCHEC, et vice-versa.
+- En combat : fournis TOUJOURS enemyName et enemyHp (PV après dégâts calculés dans le contexte).
+- hpChange en combat : négatif si Bjorn reçoit des coups (jamais 0 sauf esquive totale critique).
 - xpGain : 10-30 XP par ennemi vaincu (enemyHp=0).
 
 RÈGLES DE SURVIE — hungerChange et thirstChange DOIVENT refléter la logique de l'action :
@@ -312,13 +317,35 @@ FORMAT JSON OBLIGATOIRE dans un bloc \`\`\`json\`\`\` AVANT le texte :
   "enemyHp": <null ou 0-100>,
   "enemyName": <null ou string>,
   "locationChange": <null ou string>,
-  "lootItem": <null ou {"name":"...","type":"weapon|armor|consumable|food|water","icon":"emoji","qty":1}>
+  "lootItem": <null ou {"name":"...","type":"weapon|armor|consumable|food|water","icon":"emoji","qty":1,"weight":<kg ex: 3.5>}>
+  // Poids indicatifs : arme légère 1-2kg, arme std 3-5kg, armure légère 2-4kg, armure lourde 8-15kg, potion 0.5kg, eau 0.5kg, nourriture 0.3kg
 }`;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // HELPERS
 // ═══════════════════════════════════════════════════════════════════════════════
 function clamp(v,mn,mx){return Math.max(mn,Math.min(mx,v));}
+
+// ── SYSTÈME DE POIDS ──────────────────────────────────────────────
+const WEIGHT_DEFAULTS={
+  weapon:3.5, armor:6.0, consumable:0.5,
+  food:0.3,   water:0.5, misc:1.0
+};
+// Capacité max en kg : base 10 + FOR*2 (utilise le FOR brut, sans malus)
+function maxCarry(forStat){ return 10 + (forStat||14)*2; }
+// Poids total de l'inventaire
+function calcWeight(inventory){
+  if(!inventory||!inventory.length) return 0;
+  return inventory.reduce((sum,i)=>{
+    const w = typeof i.weight==="number" ? i.weight : (WEIGHT_DEFAULTS[i.type]||1.0);
+    return sum + w*(i.qty||1);
+  },0);
+}
+// Normaliser un item (ajouter weight si manquant)
+function normalizeItem(item){
+  if(typeof item.weight==="number") return item;
+  return {...item, weight: WEIGHT_DEFAULTS[item.type||"misc"]||1.0};
+}
 
 // ── SYSTÈME DE DÉS ET DÉGÂTS CLIENT-SIDE ─────────────────────────
 function rollD100(){ return Math.floor(Math.random()*100)+1; }
@@ -368,7 +395,14 @@ function getSurvivalMalus(char){
   // ENDURANCE FAIBLE — malus physique
   if(char.stamina<=0){forMod-=12;agiMod-=12;}
   else if(char.stamina/char.staminaMax<0.2){forMod-=5;agiMod-=4;}
-  return {forMod,agiMod,endMod,hpDrain,staDrain};
+  // SURCHARGE — utilise FOR brut pour éviter la dépendance circulaire
+  const rawFor = char.stats ? (char.stats.FOR||14) : 14;
+  const totalW = calcWeight(char.inventory||[]);
+  const maxW   = maxCarry(rawFor);
+  const wRatio = maxW > 0 ? totalW/maxW : 0;
+  if(wRatio > 1.0){forMod-=4; agiMod-=7; staDrain+=10;}
+  else if(wRatio > 0.85){agiMod-=3; staDrain+=4;}
+  return {forMod,agiMod,endMod,hpDrain,staDrain,totalW,maxW,wRatio};
 }
 
 function getSurvivalStatus(char){
@@ -389,6 +423,11 @@ function getSurvivalStatus(char){
   // Stamina warning — ne pas doubler avec char.unconscious
   if(!char.unconscious && char.stamina<=0) warnings.push({text:"💤 Endurance à zéro !",color:"#aaaaff",blink:true});
   else if(char.stamina/char.staminaMax<0.2) warnings.push({text:"⚡ Épuisé — malus physique",color:"#4488cc"});
+  // Surcharge
+  const rawFor2 = char.stats ? (char.stats.FOR||14) : 14;
+  const wRatio2 = maxCarry(rawFor2) > 0 ? calcWeight(char.inventory||[])/maxCarry(rawFor2) : 0;
+  if(wRatio2 > 1.0) warnings.push({text:"⚖️ SURCHARGE — malus AGI/END !",color:"#ffaa22",blink:true});
+  else if(wRatio2 > 0.85) warnings.push({text:"⚖️ Chargé",color:"#aa7722"});
   return warnings;
 }
 
@@ -512,7 +551,10 @@ function App(){
   const loadGame=()=>{
     const s=loadSave();
     if(!s){showNotif("Aucune sauvegarde !","#cc4444");return;}
-    const savedChar={...INITIAL_CHAR,...s.char}; // merge pour éviter les champs manquants
+    // Merge + normalisation des items sans weight (vieilles saves)
+    const rawSaved = s.char||{};
+    const savedChar={...INITIAL_CHAR,...rawSaved,
+      inventory:(rawSaved.inventory||[]).map(normalizeItem)};
     setChar(savedChar);
     const savedMsgs=s.messages||INIT_MSG;
     setMessages(savedMsgs);
@@ -585,12 +627,15 @@ function App(){
     if(mal.hpDrain>0)   c.hp      =Math.max(0,c.hp-mal.hpDrain);
     if(mal.staDrain>0)  c.stamina =Math.max(0,c.stamina-mal.staDrain);
 
-    // Loot — guard qty>0 + normalisation des champs
+    // Loot — guard qty>0 + normalisation complète des champs + weight
     if(d.lootItem && d.lootItem.name){
-      const lootQty = Math.max(1, parseInt(d.lootItem.qty)||1); // jamais 0 ni négatif
-      const lootItem = {...d.lootItem, qty:lootQty,
-        type: d.lootItem.type||"misc",
-        icon: d.lootItem.icon||"📦"};
+      const lootQty  = Math.max(1, parseInt(d.lootItem.qty)||1);
+      const lootType = d.lootItem.type||"misc";
+      const lootW    = typeof d.lootItem.weight==="number" && d.lootItem.weight>0
+                         ? d.lootItem.weight
+                         : (WEIGHT_DEFAULTS[lootType]||1.0);
+      const lootItem = { name:d.lootItem.name, type:lootType,
+        icon:d.lootItem.icon||"📦", qty:lootQty, weight:lootW };
       const ex=c.inventory.find(i=>i.name===lootItem.name);
       if(ex) c.inventory=c.inventory.map(i=>i.name===lootItem.name?{...i,qty:i.qty+lootQty}:i);
       else   c.inventory=[...c.inventory, lootItem];
@@ -637,7 +682,7 @@ function App(){
     const hh=String(char.hour).padStart(2,"0")+":00";
     const dateStr="Jour "+char.day+" Mois "+char.month+" | "+hh;
 
-    // ── DÉ CLIENT-SIDE ──────────────────────────────────────────
+    // ── DÉ CLIENT-SIDE — injecté dans TOUTES les actions ──────────
     const inCombat = !!enemy;
     const clientRoll = rollD100();
     let clientDmg = null;
@@ -645,11 +690,16 @@ function App(){
       clientDmg = calcCombatDamage(clientRoll, char.stats.FOR + mal.forMod, enemy.hp);
     }
     const rollLabel = clientRoll>=80?"CRITIQUE":clientRoll<=20?"DÉSASTRE":clientRoll>=51?"SUCCÈS":"ÉCHEC";
-    const combatCtx = inCombat
-      ? ` | COMBAT vs ${enemy.name} (PV ennemi:${enemy.hp}/100) | [ROLL:${clientRoll}=${rollLabel}] | Dégâts sur ennemi:${clientDmg.enemyDmg} | Dégâts sur Bjorn:${-clientDmg.playerDmg} | PV ennemi après:${clientDmg.newEnemyHp}`
-      : "";
 
-    const ctx=`[${dateStr} | PV:${char.hp}/${char.hpMax} END:${char.stamina}/${char.staminaMax} RAGE:${char.rage}/${char.rageMax} Or:${char.gold}g Nv:${char.level}${char.unconscious?" | INCONSCIENT":""} | Lieu:${char.location} | Faim:${char.hunger}% Soif:${char.thirst}% Temp:${char.temp}°C | FOR:${char.stats.FOR+mal.forMod} AGI:${char.stats.AGI+mal.agiMod} | Inventaire:${inv}${combatCtx}]`;
+    // Le dé est toujours injecté — Claude DOIT narrer selon ce résultat
+    // rollCtx sans crochets propres (ctx lui ajoute le ] final)
+    const rollInfo = `ROLL:${clientRoll}=${rollLabel}`;
+    const combatCtx = inCombat
+      ? ` | COMBAT vs ${enemy.name} (PV:${enemy.hp}/100) | ${rollInfo} | DmgEnnemi:${clientDmg.enemyDmg} | DmgBjorn:${-clientDmg.playerDmg} | HPennemiAprès:${clientDmg.newEnemyHp}`
+      : ` | ${rollInfo}`;
+
+    const weightStr = char.inventory.length>0 ? ` | Charge:${calcWeight(char.inventory).toFixed(1)}/${maxCarry(char.stats.FOR).toFixed(0)}kg` : "";
+    const ctx=`[${dateStr} | PV:${char.hp}/${char.hpMax} END:${char.stamina}/${char.staminaMax} RAGE:${char.rage}/${char.rageMax} Or:${char.gold}g Nv:${char.level}${char.unconscious?" | INCONSCIENT":""}${weightStr} | Lieu:${char.location} | Faim:${char.hunger}% Soif:${char.thirst}% Temp:${char.temp}°C | FOR:${char.stats.FOR+mal.forMod} AGI:${char.stats.AGI+mal.agiMod} | Inventaire:${inv}${combatCtx}]`;
 
     try{
       const res=await fetch("https://api.anthropic.com/v1/messages",{
@@ -701,13 +751,14 @@ function App(){
       if(delta.goldChange>0)   showNotif("💰 +"+delta.goldChange+" or","#ffd700");
       if(delta.goldChange<0)   showNotif("💰 "+delta.goldChange+" or","#aa6622");
       if(delta.xpGain>0)       showNotif("✨ +"+delta.xpGain+" XP","#aaddff");
-      if(delta.lootItem)       showNotif("📦 "+delta.lootItem.icon+delta.lootItem.name,"#c8a040");
+      if(delta.lootItem)       showNotif((delta.lootItem.icon||"📦")+" "+delta.lootItem.name,"#c8a040");
       if(inCombat && clientDmg && clientDmg.enemyDmg>0) showNotif("⚔️ -"+clientDmg.enemyDmg+" PV ennemi","#ee6622");
 
       setChar(p=>applyDelta(delta,p));
+      // Toujours afficher le dé client (c'est lui qui a été transmis à Claude)
       const rc=clientRoll>=80?"#ffd700":clientRoll<=20?"#ff3333":clientRoll>=51?"#44cc77":"#cc4444";
       const rl=clientRoll>=80?"CRITIQUE!":clientRoll<=20?"DÉSASTRE!":clientRoll>=51?"SUCCÈS":"ÉCHEC";
-      setMessages(p=>[...p,{role:"assistant",text:narrative,roll:clientRoll,rc,rl}]);
+      setMessages(p=>[...p,{role:"assistant",text:narrative,roll:clientRoll,success:clientRoll>=51,rc,rl}]);
       history.current.push({role:"assistant",content:narrative});
       setTab("journal");
     }catch(e){
@@ -751,6 +802,15 @@ function App(){
           .filter(i=>i.qty>0)
       };
     });
+  };
+
+  // Jeter un item de l'inventaire
+  const dropItem=(itemName)=>{
+    const item = char.inventory.find(i=>i.name===itemName);
+    if(!item) return;
+    if(!window.confirm(`Jeter ${item.qty>1?item.qty+"× ":""}${itemName} ?`)) return;
+    setChar(p=>({...p, inventory:p.inventory.filter(i=>i.name!==itemName)}));
+    showNotif("🗑 Jeté : "+itemName,"#7a5020");
   };
 
   // Récupération d'inconscience — Bjorn reprend conscience lentement
@@ -971,24 +1031,49 @@ function App(){
               })}
             </div>
 
-            <div style={{fontFamily:"'Cinzel',serif",fontSize:10,color:"#5a3818",letterSpacing:3,marginBottom:8}}>▸ INVENTAIRE</div>
+            {(()=>{
+              const totalW=calcWeight(char.inventory);
+              const maxW=maxCarry(char.stats.FOR);
+              const wPct=Math.min(100,(totalW/maxW)*100);
+              const wColor=wPct>100?"#ff6622":wPct>85?"#ffaa22":"#6a9a44";
+              return(<>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                  <div style={{fontFamily:"'Cinzel',serif",fontSize:10,color:"#5a3818",letterSpacing:3}}>▸ INVENTAIRE</div>
+                  <div style={{fontSize:10,color:wColor,fontFamily:"'Cinzel',serif"}}>⚖ {totalW.toFixed(1)}/{maxW.toFixed(0)}kg</div>
+                </div>
+                {char.inventory.length>0&&(
+                  <div style={{height:4,background:"#1a1208",borderRadius:2,overflow:"hidden",marginBottom:8}}>
+                    <div style={{height:"100%",width:Math.min(100,wPct)+"%",background:wColor,transition:"width 0.4s",borderRadius:2}}/>
+                  </div>
+                )}
+              </>);
+            })()}
             {char.inventory.length===0
               ?<div style={{background:"#0a0804",border:"1px dashed #2a1808",borderRadius:8,padding:"14px",textAlign:"center",color:"#3a2808",fontSize:12,fontStyle:"italic",marginBottom:12}}>Vide — explore pour trouver eau, nourriture et équipement.</div>
               :<div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:12}}>
-                {char.inventory.map((it)=>(
-                  <div key={it.name} style={{background:"#0e0a02",border:"1px solid #2a1808",borderRadius:10,padding:"8px 12px",display:"flex",alignItems:"center",gap:10}}>
-                    <span style={{fontSize:20}}>{it.icon}</span>
-                    <div style={{flex:1}}>
-                      <div style={{fontSize:13,color:"#d4a870"}}>{it.name}</div>
-                      <div style={{fontSize:9,color:"#5a3818",letterSpacing:1}}>{(it.type||"").toUpperCase()} ×{it.qty}</div>
+                {char.inventory.map((it)=>{
+                  const w=(typeof it.weight==="number"?it.weight:(WEIGHT_DEFAULTS[it.type]||1.0));
+                  return(
+                  <div key={it.name} style={{background:"#0e0a02",border:"1px solid #2a1808",borderRadius:10,padding:"8px 12px",display:"flex",alignItems:"center",gap:8}}>
+                    <span style={{fontSize:18}}>{it.icon||"📦"}</span>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:13,color:"#d4a870",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.name}</div>
+                      <div style={{fontSize:9,color:"#5a3818",letterSpacing:1}}>{(it.type||"misc").toUpperCase()} ×{it.qty} · {(w*it.qty).toFixed(1)}kg</div>
                     </div>
-                    {(it.type==="consumable"||it.type==="food"||it.type==="water")&&it.qty>0&&(
-                      <button onClick={()=>useConsumable(it)} style={{background:"#0a0e04",border:"1px solid #2a4010",borderRadius:6,color:"#88cc44",padding:"4px 8px",cursor:"pointer",fontSize:11}}>
-                        Utiliser
+                    <div style={{display:"flex",gap:5,flexShrink:0}}>
+                      {(it.type==="consumable"||it.type==="food"||it.type==="water")&&it.qty>0&&(
+                        <button onClick={()=>useConsumable(it)}
+                          style={{background:"#0a0e04",border:"1px solid #2a4010",borderRadius:6,color:"#88cc44",padding:"4px 7px",cursor:"pointer",fontSize:11}}>
+                          ✓
+                        </button>
+                      )}
+                      <button onClick={()=>dropItem(it.name)}
+                        style={{background:"#100804",border:"1px solid #3a1808",borderRadius:6,color:"#7a4422",padding:"4px 7px",cursor:"pointer",fontSize:11}}>
+                        🗑
                       </button>
-                    )}
+                    </div>
                   </div>
-                ))}
+                );})}
               </div>
             }
 
