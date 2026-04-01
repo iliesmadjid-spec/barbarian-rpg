@@ -262,6 +262,41 @@ const INITIAL_CHAR={
   unconscious:false,
 };
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// ORIGINES + SCÉNARIOS — doivent être déclarés AVANT buildSystemPrompt
+// ═══════════════════════════════════════════════════════════════════════════════
+const ORIGINS=[
+  {id:"sauvage",   label:"Sauvage des Terres Nordiques", desc:"Né dans les glaces. Résistant au froid, habitué à la faim.",
+   bonus:{END:+2,FOR:+1,temp:+3,hungerMax:120}, startItems:[{name:"Fourrure grossière",type:"armor",icon:"🧥",qty:1,weight:2.0}]},
+  {id:"mercenaire",label:"Mercenaire sans Maître",       desc:"Vieux soldat. Connaît les armes, pas la pitié.",
+   bonus:{FOR:+2,AGI:+1},startItems:[{name:"Couteau rouillé",type:"weapon",icon:"🗡️",qty:1,weight:0.8}]},
+  {id:"gladiateur",label:"Gladiateur Évadé",             desc:"Survécu à l'arène. Rage plus vite, encaisse plus.",
+   bonus:{FOR:+1,END:+1,rageMax:+20}, startItems:[]},
+  {id:"nomade",    label:"Nomade du Désert",             desc:"Endurant à la soif, rapide et discret.",
+   bonus:{AGI:+2,thirstMax:120,PER:+1}, startItems:[{name:"Gourde vide",type:"water",icon:"🫙",qty:1,weight:0.3}]},
+];
+
+const SCENARIOS=[
+  {id:"default",    label:"Donjon & Stone",        desc:"Le jeu original. Bjorn réincarné dans le donjon classique.", prompt:""},
+  {id:"siege",      label:"Le Siège de Grimmhold", desc:"La forteresse est assiégée. Bjorn piégé à l'intérieur avec les défenseurs.",
+   prompt:"La forteresse de Grimmhold est assiégée par une armée de 10000 hommes. Bjorn est piégé avec quelques centaines de survivants. Ressources critiques, moral brisé."},
+  {id:"prison",     label:"Prison de Sangre Negra",desc:"Bjorn se réveille enchaîné dans une prison souterraine. Factions, gardes, tunnels secrets.",
+   prompt:"Bjorn se réveille dans la prison de Sangre Negra. Factions rivales, gardes corrompus, tunnels secrets. Objectif : s'évader ou mourir."},
+  {id:"surface",    label:"Surface Maudite",        desc:"Survie dans une nature hostile post-apocalyptique.",
+   prompt:"Bjorn est à la surface d'un monde dévasté. Températures extrêmes, bêtes mutantes, ruines de civilisation. Survie pure."},
+  {id:"custom",     label:"✍ Scénario personnalisé",desc:"Décris ton propre scénario.", prompt:""},
+];
+
+const INIT_MSG_DEFAULT="Les portes de pierre s'ouvrent dans un grondement sourd. Tu es {NAME} — mains nues, ventre vide, gorge sèche. Le donjon est glacial. Tu n'as rien. Que fais-tu ?";
+
+function buildInitMsg(charName, scenario, customText){
+  if(scenario.id==="custom") return (customText||"L'aventure commence.").replace("{NAME}",charName);
+  const base = scenario.prompt
+    ? "Contexte : "+scenario.prompt+". Tu es {NAME}, sans équipement, sans alliés. Que fais-tu ?"
+    : INIT_MSG_DEFAULT;
+  return base.replace(/\{NAME\}/g,charName);
+}
+
 // Le prompt est généré dynamiquement selon le perso et le scénario
 function buildSystemPrompt(charName, originId, scenarioId, scenarioPrompt){
   const origin = ORIGINS.find(o=>o.id===originId)||ORIGINS[0];
@@ -432,41 +467,6 @@ function listSaves(){
 // ═══════════════════════════════════════════════════════════════════════════════
 // APP
 // ═══════════════════════════════════════════════════════════════════════════════
-// ORIGINES — bonus de départ selon le passé du personnage
-const ORIGINS=[
-  {id:"sauvage",   label:"Sauvage des Terres Nordiques", desc:"Né dans les glaces. Résistant au froid, habitué à la faim.",
-   bonus:{END:+2,FOR:+1,temp:+3,hungerMax:120}, startItems:[{name:"Fourrure grossière",type:"armor",icon:"🧥",qty:1,weight:2.0}]},
-  {id:"mercenaire",label:"Mercenaire sans Maître",       desc:"Vieux soldat. Connaît les armes, pas la pitié.",
-   bonus:{FOR:+2,AGI:+1},startItems:[{name:"Couteau rouillé",type:"weapon",icon:"🗡️",qty:1,weight:0.8}]},
-  {id:"gladiateur",label:"Gladiateur Évadé",             desc:"Survécu à l'arène. Rage plus vite, encaisse plus.",
-   bonus:{FOR:+1,END:+1,rageMax:+20}, startItems:[]},
-  {id:"nomade",    label:"Nomade du Désert",             desc:"Endurant à la soif, rapide et discret.",
-   bonus:{AGI:+2,thirstMax:120,PER:+1}, startItems:[{name:"Gourde vide",type:"water",icon:"🫙",qty:1,weight:0.3}]},
-];
-
-// SCÉNARIOS DE DÉPART
-const SCENARIOS=[
-  {id:"default",    label:"Donjon & Stone",        desc:"Le jeu original. Bjorn réincarné dans le donjon classique.",
-   prompt:""},
-  {id:"siege",      label:"Le Siège de Grimmhold", desc:"La forteresse est assiégée. Bjorn se retrouve piégé à l'intérieur avec les défenseurs.",
-   prompt:" Le contexte : la forteresse de Grimmhold est assiégée par une armée de 10 000 hommes. Bjorn est piégé à l'intérieur avec quelques centaines de survivants. Ressources critiques, moral brisé, ennemi à chaque mur."},
-  {id:"prison",     label:"Prison de Sangre Negra",desc:"Bjorn se réveille enchaîné dans une prison souterraine. Pas de donjon — juste des barreaux, des gardes, et des factions.",
-   prompt:" Le contexte : Bjorn se réveille dans la prison de Sangre Negra, une prison souterraine infâme. Factions rivales, gardes corrompus, tunnels secrets. Objectif : s'évader ou mourir."},
-  {id:"surface",    label:"Surface Maudite",        desc:"Pas de donjon. Bjorn survit dans une nature hostile post-apocalyptique.",
-   prompt:" Le contexte : Bjorn est à la surface, dans un monde dévasté par une catastrophe ancienne. Températures extrêmes, bêtes mutantes, ruines de civilisation. Survie pure."},
-  {id:"custom",     label:"✍ Scénario personnalisé",desc:"Décris ton propre scénario.",
-   prompt:""},
-];
-
-const INIT_MSG_DEFAULT="Les portes de pierre s'ouvrent dans un grondement sourd. Tu es {NAME} — mains nues, ventre vide, gorge sèche. Le donjon est glacial. Tu n'as rien. Personne ne t'aidera. Que fais-tu ?";
-
-function buildInitMsg(charName, scenario, customText){
-  if(scenario.id==="custom") return (customText||"L'aventure commence.").replace("{NAME}",charName);
-  const base = (scenario.prompt
-    ? "Contexte : "+scenario.prompt.trim()+". Tu es {NAME}, sans équipement, sans alliés. Que fais-tu ?"
-    : INIT_MSG_DEFAULT);
-  return base.replace(/\{NAME\}/g,charName);
-}
 
 function App(){
   const [apiKey,setApiKey]=useState(localStorage.getItem(APIKEY_KEY)||"");
