@@ -24,110 +24,216 @@
 const {useState,useEffect,useRef,useCallback} = React;
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SOUND ENGINE v3 — simple, mobile-safe, pas de stale closure
+// SOUND ENGINE v4 — ambiance cave réaliste : reverb, vent, gouttes, grondement
 // ═══════════════════════════════════════════════════════════════════════════════
 class SoundEngine {
-  constructor(){ this.ctx=null; this.nodes=[]; this.curMode=null; }
+  constructor(){ this.ctx=null; this.master=null; this.reverb=null; this.reverbDry=null; this.nodes=[]; this.curMode=null; }
 
-  _ctx(){
-    if(!this.ctx){
-      this.ctx=new(window.AudioContext||window.webkitAudioContext)();
-    }
+  _init(){
+    if(this.ctx){ if(this.ctx.state==="suspended") this.ctx.resume(); return; }
+    this.ctx = new(window.AudioContext||window.webkitAudioContext)();
     if(this.ctx.state==="suspended") this.ctx.resume();
-    return this.ctx;
+
+    // Compresseur master pour éviter la saturation
+    const comp = this.ctx.createDynamicsCompressor();
+    comp.threshold.value=-18; comp.knee.value=8;
+    comp.ratio.value=4; comp.attack.value=0.01; comp.release.value=0.2;
+    this.master = this.ctx.createGain(); this.master.gain.value=0.6;
+    this.master.connect(comp); comp.connect(this.ctx.destination);
+
+    // Reverb longue — simule l'écho d'une grotte
+    const rate=this.ctx.sampleRate;
+    const len=rate*3.5;
+    const ibuf=this.ctx.createBuffer(2,len,rate);
+    for(let ch=0;ch<2;ch++){
+      const d=ibuf.getChannelData(ch);
+      for(let i=0;i<len;i++) d[i]=(Math.random()*2-1)*Math.pow(1-i/len,1.5);
+    }
+    this.reverb=this.ctx.createConvolver(); this.reverb.buffer=ibuf;
+    const rvGain=this.ctx.createGain(); rvGain.gain.value=0.45;
+    this.reverb.connect(rvGain); rvGain.connect(this.master);
+
+    // Signal sec (dry) direct
+    this.reverbDry=this.ctx.createGain(); this.reverbDry.gain.value=0.55;
+    this.reverbDry.connect(this.master);
   }
 
+  // Nœud de sortie mixé (dry+reverb)
+  _out(){ return { dry:this.reverbDry, wet:this.reverb }; }
+
   stop(){
-    this.nodes.forEach(n=>{ try{n.stop&&n.stop(); n.disconnect&&n.disconnect();}catch{} });
+    this.nodes.forEach(n=>{try{n.stop&&n.stop();n.disconnect&&n.disconnect();}catch{}});
     this.nodes=[];
   }
 
-  // Oscillateur simple avec fade-in
-  _osc(freq,vol,type="sine",fadeSec=1.5){
-    const c=this._ctx();
-    const o=c.createOscillator();
-    const g=c.createGain();
-    const comp=c.createDynamicsCompressor();
-    o.type=type; o.frequency.value=freq;
-    g.gain.setValueAtTime(0,c.currentTime);
-    g.gain.linearRampToValueAtTime(vol,c.currentTime+fadeSec);
-    o.connect(g); g.connect(comp); comp.connect(c.destination);
-    o.start(); this.nodes.push(o,g,comp);
-  }
-
-  // Bruit blanc filtré (vent/ambiance) — un seul buffer
-  _wind(freq,vol){
-    const c=this._ctx();
-    const buf=c.createBuffer(1,c.sampleRate,c.sampleRate);
-    const d=buf.getChannelData(0);
-    for(let i=0;i<d.length;i++) d[i]=(Math.random()*2-1);
+  // ── GRONDEMENT SOUTERRAIN ── bruit rose grave très filtré
+  _rumble(vol=0.08){
+    const c=this.ctx;
+    const buf=c.createBuffer(1,c.sampleRate*4,c.sampleRate);
+    const d=buf.getChannelData(0); for(let i=0;i<d.length;i++) d[i]=Math.random()*2-1;
     const src=c.createBufferSource(); src.buffer=buf; src.loop=true;
-    const filt=c.createBiquadFilter(); filt.type="bandpass"; filt.frequency.value=freq; filt.Q.value=1.5;
-    const g=c.createGain(); g.gain.value=vol;
-    src.connect(filt); filt.connect(g); g.connect(c.destination);
-    src.start(); this.nodes.push(src,filt,g);
+    const lp1=c.createBiquadFilter(); lp1.type="lowpass"; lp1.frequency.value=80;
+    const lp2=c.createBiquadFilter(); lp2.type="lowpass"; lp2.frequency.value=60;
+    // LFO lent sur le volume — le grondement respire
+    const lfo=c.createOscillator(); const lfoG=c.createGain();
+    const g=c.createGain();
+    lfo.frequency.value=0.07; lfoG.gain.value=vol*0.3; g.gain.value=vol;
+    lfo.connect(lfoG); lfoG.connect(g.gain);
+    src.connect(lp1); lp1.connect(lp2); lp2.connect(g);
+    g.connect(this.reverbDry); g.connect(this.reverb);
+    src.start(); lfo.start();
+    this.nodes.push(src,lp1,lp2,lfo,lfoG,g);
   }
 
-  // Gouttes irrégulières
-  _drip(){
-    const c=this._ctx();
-    const go=()=>{
+  // ── VENT DE COULOIR ── bruit filtré bandpass qui monte et descend
+  _wind(vol=0.05){
+    const c=this.ctx;
+    // Deux couches de bruit pour donner de la texture
+    [280,480].forEach((freq,i)=>{
+      const buf=c.createBuffer(1,c.sampleRate*5,c.sampleRate);
+      const d=buf.getChannelData(0); for(let j=0;j<d.length;j++) d[j]=Math.random()*2-1;
+      const src=c.createBufferSource(); src.buffer=buf; src.loop=true;
+      const bp=c.createBiquadFilter(); bp.type="bandpass"; bp.frequency.value=freq; bp.Q.value=i===0?1.2:2.0;
+      const lfo=c.createOscillator(); const lfoG=c.createGain();
+      const g=c.createGain();
+      lfo.frequency.value=0.04+i*0.02; lfoG.gain.value=vol*0.5; g.gain.value=vol*(i===0?1:0.4);
+      lfo.connect(lfoG); lfoG.connect(g.gain);
+      src.connect(bp); bp.connect(g); g.connect(this.reverbDry);
+      src.start(); lfo.start();
+      this.nodes.push(src,bp,lfo,lfoG,g);
+    });
+  }
+
+  // ── GOUTTES D'EAU ── son réaliste : impact + résonance + écho
+  _drips(minDelay=3000,maxDelay=12000){
+    const c=this.ctx;
+    const schedDrip=()=>{
+      const delay=minDelay+Math.random()*(maxDelay-minDelay);
       const t=setTimeout(()=>{
-        if(!this.ctx) return;
-        const o=c.createOscillator(), g=c.createGain();
-        const f=300+Math.random()*250;
-        o.type="sine"; o.frequency.setValueAtTime(f,c.currentTime);
-        o.frequency.exponentialRampToValueAtTime(f*0.4,c.currentTime+0.5);
-        g.gain.setValueAtTime(0.08,c.currentTime);
-        g.gain.exponentialRampToValueAtTime(0.001,c.currentTime+0.55);
-        o.connect(g); g.connect(c.destination);
-        o.start(); o.stop(c.currentTime+0.6);
-        go();
-      },(4+Math.random()*10)*1000);
+        if(!this.ctx||!this.curMode) return;
+        const now=c.currentTime;
+        // Impact initial — click court
+        const clickOsc=c.createOscillator(); const clickG=c.createGain();
+        const f=500+Math.random()*800;
+        clickOsc.type="sine"; clickOsc.frequency.setValueAtTime(f,now);
+        clickOsc.frequency.exponentialRampToValueAtTime(f*0.15,now+0.04);
+        clickG.gain.setValueAtTime(0,now);
+        clickG.gain.linearRampToValueAtTime(0.18,now+0.003);
+        clickG.gain.exponentialRampToValueAtTime(0.001,now+0.05);
+        clickOsc.connect(clickG); clickG.connect(this.reverb); clickG.connect(this.reverbDry);
+        clickOsc.start(now); clickOsc.stop(now+0.06);
+        // Résonance de la cavité — sine plus grave qui dure un peu
+        const resOsc=c.createOscillator(); const resG=c.createGain();
+        resOsc.type="sine"; resOsc.frequency.value=f*0.3;
+        resG.gain.setValueAtTime(0.06,now+0.005);
+        resG.gain.exponentialRampToValueAtTime(0.001,now+0.35);
+        resOsc.connect(resG); resG.connect(this.reverb);
+        resOsc.start(now+0.005); resOsc.stop(now+0.38);
+        schedDrip();
+      },delay);
       this.nodes.push({stop:()=>clearTimeout(t)});
     };
-    go();
+    // 2-3 sources de gouttes décalées pour plus de naturel
+    schedDrip();
+    setTimeout(schedDrip, 1500+Math.random()*2000);
+    setTimeout(schedDrip, 4000+Math.random()*3000);
   }
 
+  // ── DRONE TONAL ── pour renforcer l'atmosphère
+  _drone(freq,vol,fadeSec=2){
+    const c=this.ctx;
+    const osc=c.createOscillator(); const g=c.createGain();
+    osc.type="sine"; osc.frequency.value=freq;
+    g.gain.setValueAtTime(0,c.currentTime);
+    g.gain.linearRampToValueAtTime(vol,c.currentTime+fadeSec);
+    osc.connect(g); g.connect(this.reverb); g.connect(this.reverbDry);
+    osc.start(); this.nodes.push(osc,g);
+  }
+
+  // ── TENSION COMBAT ── battement de fréquence + distorsion
+  _combatTension(){
+    const c=this.ctx;
+    // Deux oscillateurs proches créent un battement naturel (7Hz = tension)
+    [[116,0.08],[123,0.07]].forEach(([f,v])=>{
+      const osc=c.createOscillator(); const g=c.createGain();
+      const wave=c.createBiquadFilter(); wave.type="lowpass"; wave.frequency.value=400;
+      osc.type="sawtooth"; osc.frequency.value=f;
+      g.gain.setValueAtTime(0,c.currentTime);
+      g.gain.linearRampToValueAtTime(v,c.currentTime+0.8);
+      osc.connect(wave); wave.connect(g); g.connect(this.reverbDry);
+      osc.start(); this.nodes.push(osc,wave,g);
+    });
+    // Bruit de friction grave — métal contre pierre
+    const nBuf=c.createBuffer(1,c.sampleRate*2,c.sampleRate);
+    const nd=nBuf.getChannelData(0); for(let i=0;i<nd.length;i++) nd[i]=Math.random()*2-1;
+    const nSrc=c.createBufferSource(); nSrc.buffer=nBuf; nSrc.loop=true;
+    const nFilt=c.createBiquadFilter(); nFilt.type="bandpass"; nFilt.frequency.value=180; nFilt.Q.value=0.8;
+    const nG=c.createGain(); nG.gain.value=0.04;
+    nSrc.connect(nFilt); nFilt.connect(nG); nG.connect(this.reverbDry);
+    nSrc.start(); this.nodes.push(nSrc,nFilt,nG);
+  }
+
+  // ── BATTEMENT CARDIAQUE ── pour danger/mort imminente
+  _heartbeat(bpm=72){
+    const c=this.ctx;
+    const interval=60000/bpm;
+    const beat=()=>{
+      if(!this.ctx||!this.curMode) return;
+      const now=c.currentTime;
+      // Deux coups (lub-dub)
+      [[now,0.12],[now+0.18,0.08]].forEach(([t,v])=>{
+        const o=c.createOscillator(); const g=c.createGain();
+        o.type="sine"; o.frequency.setValueAtTime(65,t);
+        o.frequency.exponentialRampToValueAtTime(30,t+0.12);
+        g.gain.setValueAtTime(v,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.15);
+        o.connect(g); g.connect(this.reverbDry);
+        o.start(t); o.stop(t+0.18);
+      });
+    };
+    beat();
+    const id=setInterval(beat,interval);
+    this.nodes.push({stop:()=>clearInterval(id)});
+  }
+
+  // ── LECTURE PAR MODE ─────────────────────────────────────────────────────────
   play(mode, hpPct=1){
     if(mode===this.curMode) return;
     this.stop(); this.curMode=mode;
-    const danger=hpPct<0.3;
+    const critical=hpPct<0.25;
 
     if(mode==="explore"){
-      // Ambiance donjon : drone grave + harmonique + vent + gouttes
-      this._osc(130,0.07,"sine",2);
-      this._osc(196,0.04,"sine",3);
-      this._wind(200,0.03);
-      this._drip();
-      if(danger) this._osc(110,0.06,"triangle",1);
+      this._rumble(0.09);                   // grondement souterrain
+      this._wind(0.04);                     // vent de couloir
+      this._drips(3000,12000);              // gouttes lentes
+      this._drone(97,0.025,3);             // drone très discret
+      if(critical){ this._drone(65,0.05,1); this._heartbeat(90); }
     }
     else if(mode==="combat"){
-      // Tension : grave + distortion + trémolo via deux osc proches
-      this._osc(110,0.10,"sawtooth",1);
-      this._osc(113,0.07,"sawtooth",1); // battement naturel 3Hz
-      this._osc(220,0.04,"triangle",2);
-      this._wind(150,0.04);
-      if(danger) this._osc(85,0.09,"sawtooth",0.5);
+      this._rumble(0.12);                   // grondement fort
+      this._combatTension();                // battement de fréquence
+      this._drips(8000,20000);              // gouttes rares (combat actif)
+      if(critical){ this._heartbeat(110); this._drone(55,0.07,0.5); }
     }
     else if(mode==="rest"){
-      this._osc(174,0.05,"sine",3);
-      this._osc(261,0.03,"sine",4);
-      this._drip();
+      this._rumble(0.05);                   // grondement très doux
+      this._drips(2000,7000);              // gouttes fréquentes au repos
+      this._drone(130,0.02,4);             // ton apaisant
     }
     else if(mode==="danger"){
-      this._osc(98,0.11,"sawtooth",0.8);
-      this._osc(102,0.08,"sawtooth",0.8); // battement 4Hz — tension
-      this._wind(130,0.05);
+      this._rumble(0.14);                   // grondement intense
+      this._wind(0.07);                     // vent fort
+      this._heartbeat(105);                 // cœur rapide
+      this._drone(55,0.08,0.5);
     }
     else if(mode==="dead"){
-      this._osc(98,0.10,"sine",2);
-      this._wind(110,0.06);
+      this._drone(55,0.10,3);
+      this._drone(82,0.06,4);
+      this._rumble(0.06);
     }
   }
 
   setMode(mode,hp=100,hpMax=100){ this.play(mode,hp/hpMax); }
-  init(){ this._ctx(); }
+  init(){ this._init(); }
 }
 const SE = new SoundEngine();
 
@@ -154,7 +260,7 @@ const INITIAL_CHAR={
   thirst:100,thirstMax:100,
   temp:12, // °C — donjon froid
   // TEMPS
-  hour:6,day:1,month:1, // 6h00, Jour 1, Mois 1
+  hour:6,day:1,month:1,_totalMins:360, // 6h00, Jour 1, Mois 1
   unconscious:false,
 };
 
@@ -311,9 +417,11 @@ function App(){
 
   // ── SAUVEGARDE AUTO ──────────────────────────────────────────────────────────
   useEffect(()=>{
-    if(!keySet)return;
-    try{localStorage.setItem(SAVE_KEY,JSON.stringify({char,messages:messages.slice(-50)}));}catch{}
-  },[char,messages,keySet]);
+    if(!keySet||screen!=="game")return;
+    // Ne sauvegarde que si la partie a vraiment commencé (au moins 1 message user)
+    if(messages.length<2)return;
+    try{localStorage.setItem(SAVE_KEY,JSON.stringify({char,messages:messages.slice(-50),savedAt:Date.now()}));}catch{}
+  },[char,messages,keySet,screen]);
 
   useEffect(()=>{if(tab==="journal")endRef.current?.scrollIntoView({behavior:"smooth"});},[messages,tab]);
 
@@ -344,7 +452,7 @@ function App(){
 
   const toggleSound=()=>{
     if(!soundOnRef.current){
-      SE.init();
+      SE._init();
       SE.play(soundMode.current||"explore", char.hp/char.hpMax);
       soundOnRef.current=true; setSoundOn(true);
     } else {
@@ -481,9 +589,10 @@ function App(){
       else if(delta.enemyHp!==null&&enemy) setEnemy(p=>p?{...p,hp:delta.enemyHp}:null);
       if(delta.enemyHp===0){setEnemy(null);showNotif("☠️ Ennemi vaincu !","#cc4444");}
 
-      // Son adaptatif
-      const nextMode=delta.event==="combat"?"combat":delta.event==="rest"?"rest":char.hp/char.hpMax<0.25?"danger":"explore";
-      updateSound(nextMode,char.hp+delta.hpChange,char.hpMax);
+      // Son adaptatif — calcul APRÈS application du delta
+      const newHp=Math.max(0,Math.min(char.hpMax,(char.hp||0)+(delta.hpChange||0)));
+      const nextMode=delta.event==="combat"?"combat":delta.event==="rest"?"rest":newHp/char.hpMax<0.25?"danger":"explore";
+      updateSound(nextMode,newHp,char.hpMax);
 
       // Notifs
       if(delta.hpChange<0)     showNotif("💔 "+delta.hpChange+" PV","#cc2222");
