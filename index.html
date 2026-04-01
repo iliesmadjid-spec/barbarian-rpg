@@ -250,7 +250,7 @@ const ALL_SKILLS=[
 
 const INITIAL_CHAR={
   name:"Bjorn",class:"Barbare",level:1,xp:0,xpNext:100,
-  hp:80,hpMax:80,stamina:60,staminaMax:60,rage:0,rageMax:100,
+  hp:80,hpMax:80,stamina:100,staminaMax:100,rage:0,rageMax:100,
   stats:{FOR:14,AGI:8,END:12,INT:3,CHA:2,PER:6},
   skills:[],inventory:[],gold:0,floor:1,location:"Entrée du Donjon",
   // SURVIE
@@ -262,19 +262,26 @@ const INITIAL_CHAR={
   unconscious:false,
 };
 
-const SYSTEM_PROMPT=`Tu es le Maître du Jeu d'un RPG BRUTAL basé sur "Surviving the Game as a Barbarian".
-Bjorn est un barbare de Nv.1 réincarné dans "Dungeon & Stone" — mains nues, sans équipement, sans or, sans compétences.
+// Le prompt est généré dynamiquement selon le perso et le scénario
+function buildSystemPrompt(charName, originId, scenarioId, scenarioPrompt){
+  const origin = ORIGINS.find(o=>o.id===originId)||ORIGINS[0];
+  const scenCtx = scenarioPrompt ? " CONTEXTE SCÉNARIO : "+scenarioPrompt : "";
+  return `Tu es le Maître du Jeu d'un RPG BRUTAL basé sur "Surviving the Game as a Barbarian".
+Le joueur incarne ${charName||"Bjorn"}, un barbare (origine : ${origin.label}) réincarné dans ce cauchemar.${scenCtx}`;
+}
+
+const SYSTEM_PROMPT_SUFFIX = `
 
 RÈGLES FONDAMENTALES :
 - Le jeu est TRÈS DIFFICILE. Économie brutale : objets rares, chers, nécessitant des sacrifices.
-- Bjorn n'a RIEN au départ. Tout doit être trouvé/volé/fabriqué/acheté avec difficulté.
+- Le personnage n'a RIEN au départ (sauf équipement de départ selon son origine). Tout doit être gagné.
 - Eau rare. Nourriture encore plus rare. Jamais gratuit.
 - Température : niveaux profonds glaciaux, certaines zones brûlantes.
 - Les PNJs sont méfiants. Pas de filet de sécurité.
 - Ton : brutal, viscéral, sans pitié. Max 4 phrases.
 
 RÈGLES DE DÉS — OBLIGATOIRE :
-- Le contexte te fournit TOUJOURS [ROLL:X=RÉSULTAT] pour chaque action.
+- Le contexte te fournit TOUJOURS ROLL:X=RÉSULTAT pour chaque action.
 - Tu DOIS narrer l'action en cohérence STRICTE avec ce résultat :
   * CRITIQUE (80+) : exploit total, résultat bien au-delà des espérances
   * SUCCÈS (51-79) : action réussie, résultat positif mais parfois partiel
@@ -282,11 +289,11 @@ RÈGLES DE DÉS — OBLIGATOIRE :
   * DÉSASTRE (≤20) : catastrophe, pire scénario possible
 - Ne jamais décrire un succès si le roll indique ÉCHEC, et vice-versa.
 - En combat : fournis TOUJOURS enemyName et enemyHp (PV après dégâts calculés dans le contexte).
-- hpChange en combat : négatif si Bjorn reçoit des coups (jamais 0 sauf esquive totale critique).
+- hpChange en combat : négatif si le personnage reçoit des coups (jamais 0 sauf esquive totale critique).
 - xpGain : 10-30 XP par ennemi vaincu (enemyHp=0).
 
 RÈGLES DE SURVIE — hungerChange et thirstChange DOIVENT refléter la logique de l'action :
-- Se reposer / dormir          → faim: 0   soif: 0   temps: +6h  (métabolisme au repos)
+- Se reposer / dormir          → faim: 0   soif: 0   temps: +6h
 - Parler / observer / attendre → faim: 0   soif: 0   temps: +10min
 - Marcher / explorer           → faim: -3  soif: -3  temps: +30min
 - Combat court (<3 rounds)     → faim: -4  soif: -6  temps: +10min
@@ -298,7 +305,7 @@ RÈGLES DE SURVIE — hungerChange et thirstChange DOIVENT refléter la logique 
 - Zone froide <5°C             → temp baisse de -2 à -5
 
 TOUJOURS fournir hungerChange, thirstChange, timeChange selon l'action réelle.
-timeChange = nombre de minutes écoulées (ex: 30 pour 30min, 360 pour 6h, 600 pour 10h).
+timeChange = nombre de minutes écoulées (ex: 30 pour 30min, 360 pour 6h).
 
 FORMAT JSON OBLIGATOIRE dans un bloc \`\`\`json\`\`\` AVANT le texte :
 {
@@ -317,9 +324,10 @@ FORMAT JSON OBLIGATOIRE dans un bloc \`\`\`json\`\`\` AVANT le texte :
   "enemyHp": <null ou 0-100>,
   "enemyName": <null ou string>,
   "locationChange": <null ou string>,
-  "lootItem": <null ou {"name":"...","type":"weapon|armor|consumable|food|water","icon":"emoji","qty":1,"weight":<kg ex: 3.5>}>
-  // Poids indicatifs : arme légère 1-2kg, arme std 3-5kg, armure légère 2-4kg, armure lourde 8-15kg, potion 0.5kg, eau 0.5kg, nourriture 0.3kg
+  "lootItem": <null ou {"name":"...","type":"weapon|armor|consumable|food|water","icon":"emoji","qty":1,"weight":<kg>}>
 }`;
+// Référence statique (écrasée au début de partie)
+let SYSTEM_PROMPT = buildSystemPrompt("Bjorn","sauvage","default","") + SYSTEM_PROMPT_SUFFIX;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // HELPERS
@@ -378,21 +386,21 @@ function calcCombatDamage(roll, forStat, currentEnemyHp){
 
 function getSurvivalMalus(char){
   let forMod=0,agiMod=0,endMod=0,hpDrain=0,staDrain=0;
-  // FAIM — drains réduits
-  if(char.hunger<=0){forMod-=10;endMod-=8;hpDrain+=3;staDrain+=8;}
-  else if(char.hunger<20){forMod-=6;endMod-=4;staDrain+=5;}
+  // FAIM — calibré pour staminaMax=100
+  if(char.hunger<=0){forMod-=10;endMod-=8;hpDrain+=3;staDrain+=5;}
+  else if(char.hunger<20){forMod-=6;endMod-=4;staDrain+=3;}
   else if(char.hunger<40){forMod-=3;endMod-=2;}
   else if(char.hunger<60){forMod-=1;}
-  // SOIF — drains réduits
-  if(char.thirst<=0){agiMod-=10;hpDrain+=5;staDrain+=12;}
-  else if(char.thirst<20){agiMod-=5;staDrain+=6;}
+  // SOIF — calibré pour staminaMax=100
+  if(char.thirst<=0){agiMod-=10;hpDrain+=5;staDrain+=7;}
+  else if(char.thirst<20){agiMod-=5;staDrain+=4;}
   else if(char.thirst<40){agiMod-=2;}
-  // TEMPÉRATURE
-  if(char.temp<0){hpDrain+=4;staDrain+=6;}
-  else if(char.temp<5){hpDrain+=2;staDrain+=3;}
-  else if(char.temp>40){hpDrain+=3;staDrain+=4;}
-  else if(char.temp>35){staDrain+=3;}
-  // ENDURANCE FAIBLE — malus physique
+  // TEMPÉRATURE — calibré pour staminaMax=100
+  if(char.temp<0){hpDrain+=4;staDrain+=4;}
+  else if(char.temp<5){hpDrain+=2;staDrain+=2;}
+  else if(char.temp>40){hpDrain+=3;staDrain+=3;}
+  else if(char.temp>35){staDrain+=2;}
+  // ENDURANCE FAIBLE — seuil à 20% (=20 sur 100)
   if(char.stamina<=0){forMod-=12;agiMod-=12;}
   else if(char.stamina/char.staminaMax<0.2){forMod-=5;agiMod-=4;}
   // SURCHARGE — utilise FOR brut pour éviter la dépendance circulaire
@@ -400,8 +408,8 @@ function getSurvivalMalus(char){
   const totalW = calcWeight(char.inventory||[]);
   const maxW   = maxCarry(rawFor);
   const wRatio = maxW > 0 ? totalW/maxW : 0;
-  if(wRatio > 1.0){forMod-=4; agiMod-=7; staDrain+=10;}
-  else if(wRatio > 0.85){agiMod-=3; staDrain+=4;}
+  if(wRatio > 1.0){forMod-=4; agiMod-=7; staDrain+=7;}
+  else if(wRatio > 0.85){agiMod-=3; staDrain+=3;}
   return {forMod,agiMod,endMod,hpDrain,staDrain,totalW,maxW,wRatio};
 }
 
@@ -453,24 +461,77 @@ function TempBadge({temp}){
   return <span style={{fontSize:10,color,fontFamily:"'Cinzel',serif"}}>{icon} {temp}°C</span>;
 }
 
-const SAVE_KEY="stb_save_v3";
 const APIKEY_KEY="stb_key";
+const SAVE_SLOTS=["stb_slot_1","stb_slot_2","stb_slot_3"];
+// Compatibilité vieille save v3
+function migrateLegacySave(){
+  try{
+    const old=localStorage.getItem("stb_save_v3");
+    if(old&&!localStorage.getItem(SAVE_SLOTS[0])){
+      localStorage.setItem(SAVE_SLOTS[0],old);
+      localStorage.removeItem("stb_save_v3");
+    }
+  }catch{}
+}
+migrateLegacySave();
+function readSlot(slot){ try{const s=localStorage.getItem(slot);return s?JSON.parse(s):null;}catch{return null;} }
+function writeSlot(slot,data){ try{localStorage.setItem(slot,JSON.stringify(data));return true;}catch{return false;} }
+function deleteSlot(slot){ try{localStorage.removeItem(slot);}catch{} }
+function listSaves(){
+  return SAVE_SLOTS.map((key,idx)=>{
+    const s=readSlot(key);
+    return s ? {slot:idx,key,char:s.char,savedAt:s.savedAt,messages:(s.messages||[])} : null;
+  });
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // APP
 // ═══════════════════════════════════════════════════════════════════════════════
-const INIT_MSG=[{role:"assistant",text:"Les portes de pierre s'ouvrent dans un grondement sourd. Tu es Bjorn — mains nues, ventre vide, gorge sèche. Le donjon est glacial. Tu n'as rien. Personne ne t'aidera. Que fais-tu ?",roll:null}];
+// ORIGINES — bonus de départ selon le passé du personnage
+const ORIGINS=[
+  {id:"sauvage",   label:"Sauvage des Terres Nordiques", desc:"Né dans les glaces. Résistant au froid, habitué à la faim.",
+   bonus:{END:+2,FOR:+1,temp:+3,hungerMax:120}, startItems:[{name:"Fourrure grossière",type:"armor",icon:"🧥",qty:1,weight:2.0}]},
+  {id:"mercenaire",label:"Mercenaire sans Maître",       desc:"Vieux soldat. Connaît les armes, pas la pitié.",
+   bonus:{FOR:+2,AGI:+1},startItems:[{name:"Couteau rouillé",type:"weapon",icon:"🗡️",qty:1,weight:0.8}]},
+  {id:"gladiateur",label:"Gladiateur Évadé",             desc:"Survécu à l'arène. Rage plus vite, encaisse plus.",
+   bonus:{FOR:+1,END:+1,rageMax:+20}, startItems:[]},
+  {id:"nomade",    label:"Nomade du Désert",             desc:"Endurant à la soif, rapide et discret.",
+   bonus:{AGI:+2,thirstMax:120,PER:+1}, startItems:[{name:"Gourde vide",type:"water",icon:"🫙",qty:1,weight:0.3}]},
+];
 
-function hasSave(){ try{return !!localStorage.getItem(SAVE_KEY);}catch{return false;} }
-function loadSave(){ try{const s=localStorage.getItem(SAVE_KEY);return s?JSON.parse(s):null;}catch{return null;} }
+// SCÉNARIOS DE DÉPART
+const SCENARIOS=[
+  {id:"default",    label:"Donjon & Stone",        desc:"Le jeu original. Bjorn réincarné dans le donjon classique.",
+   prompt:""},
+  {id:"siege",      label:"Le Siège de Grimmhold", desc:"La forteresse est assiégée. Bjorn se retrouve piégé à l'intérieur avec les défenseurs.",
+   prompt:" Le contexte : la forteresse de Grimmhold est assiégée par une armée de 10 000 hommes. Bjorn est piégé à l'intérieur avec quelques centaines de survivants. Ressources critiques, moral brisé, ennemi à chaque mur."},
+  {id:"prison",     label:"Prison de Sangre Negra",desc:"Bjorn se réveille enchaîné dans une prison souterraine. Pas de donjon — juste des barreaux, des gardes, et des factions.",
+   prompt:" Le contexte : Bjorn se réveille dans la prison de Sangre Negra, une prison souterraine infâme. Factions rivales, gardes corrompus, tunnels secrets. Objectif : s'évader ou mourir."},
+  {id:"surface",    label:"Surface Maudite",        desc:"Pas de donjon. Bjorn survit dans une nature hostile post-apocalyptique.",
+   prompt:" Le contexte : Bjorn est à la surface, dans un monde dévasté par une catastrophe ancienne. Températures extrêmes, bêtes mutantes, ruines de civilisation. Survie pure."},
+  {id:"custom",     label:"✍ Scénario personnalisé",desc:"Décris ton propre scénario.",
+   prompt:""},
+];
+
+const INIT_MSG_DEFAULT="Les portes de pierre s'ouvrent dans un grondement sourd. Tu es {NAME} — mains nues, ventre vide, gorge sèche. Le donjon est glacial. Tu n'as rien. Personne ne t'aidera. Que fais-tu ?";
+
+function buildInitMsg(charName, scenario, customText){
+  if(scenario.id==="custom") return (customText||"L'aventure commence.").replace("{NAME}",charName);
+  const base = (scenario.prompt
+    ? "Contexte : "+scenario.prompt.trim()+". Tu es {NAME}, sans équipement, sans alliés. Que fais-tu ?"
+    : INIT_MSG_DEFAULT);
+  return base.replace(/\{NAME\}/g,charName);
+}
 
 function App(){
   const [apiKey,setApiKey]=useState(localStorage.getItem(APIKEY_KEY)||"");
   const [keySet,setKeySet]=useState(!!localStorage.getItem(APIKEY_KEY));
-  // screen: "start" | "game"
-  const [screen,setScreen]=useState(()=> hasSave() && !!localStorage.getItem(APIKEY_KEY) ? "start" : "game");
+  // screen: "start" | "chargen" | "game"
+  const hasSaveData=()=>listSaves().some(Boolean);
+  const [screen,setScreen]=useState(()=> hasSaveData() && !!localStorage.getItem(APIKEY_KEY) ? "start" : "chargen");
+  const [activeSlot,setActiveSlot]=useState(0); // slot de sauvegarde actif
   const [char,setChar]=useState(INITIAL_CHAR);
-  const [messages,setMessages]=useState(INIT_MSG);
+  const [messages,setMessages]=useState([]);
   const [input,setInput]=useState("");
   const [loading,setLoad]=useState(false);
   const [tab,setTab]=useState("journal");
@@ -481,7 +542,11 @@ function App(){
   const [soundOn,setSoundOn]=useState(false);
   const soundOnRef=useRef(false);
   const [dead,setDead]=useState(false);
-  const [unconscious,setUnconscious]=useState(()=>{ try{const s=localStorage.getItem("stb_save_v3");return s?JSON.parse(s).char?.unconscious||false:false;}catch{return false;} });
+  const [unconscious,setUnconscious]=useState(false);
+  // Chargen state
+  const [cg,setCg]=useState({
+    name:"Bjorn", originId:"sauvage", scenarioId:"default", customScenario:""
+  });
   const endRef=useRef(null);
   const history=useRef([]);
   const inputRef=useRef(null);
@@ -489,11 +554,11 @@ function App(){
 
   // ── SAUVEGARDE AUTO ──────────────────────────────────────────────────────────
   useEffect(()=>{
-    if(!keySet||screen!=="game")return;
-    // Ne sauvegarde que si la partie a vraiment commencé (au moins 1 message user)
-    if(messages.length<2)return;
-    try{localStorage.setItem(SAVE_KEY,JSON.stringify({char,messages:messages.slice(-50),enemy,savedAt:Date.now()}));}catch{}
-  },[char,messages,keySet,screen]);
+    if(!keySet||screen!=="game") return;
+    if(messages.length<2) return; // pas encore commencé
+    if(dead) return; // ne pas écraser la save avec un perso mort
+    writeSlot(SAVE_SLOTS[activeSlot],{char,messages:messages.slice(-50),enemy,savedAt:Date.now()});
+  },[char,messages,enemy,keySet,screen,activeSlot,dead]);
 
   useEffect(()=>{if(tab==="journal")endRef.current?.scrollIntoView({behavior:"smooth"});},[messages,tab]);
 
@@ -509,11 +574,19 @@ function App(){
   useEffect(()=>{
     if(char.unconscious && !unconscious){
       setUnconscious(true);
+      // MORT si inconscient en combat solo
+      if(enemy && !dead){
+        setDead(true);
+        setUnconscious(false);
+        if(soundOnRef.current) SE.play("dead",0);
+        setMessages(p=>[...p,{role:"assistant",text:"☠ Bjorn s'effondre, inconscient. "+enemy.name+" n'hésite pas — un coup final achève le barbare à terre. MORT AU COMBAT.",roll:null}]);
+        return;
+      }
       if(soundOnRef.current) SE.play("danger",char.hp/char.hpMax);
       setMessages(p=>[...p,{role:"assistant",text:"⚠️ Bjorn s'effondre, à bout de forces. Il est inconscient. Ses yeux se ferment malgré lui...",roll:null}]);
     }
     if(!char.unconscious && unconscious) setUnconscious(false);
-  },[char.unconscious]);
+  },[char.unconscious, enemy]);
 
   // ── SON ──────────────────────────────────────────────────────────────────────
   const updateSound=(mode,hp,hpMax)=>{
@@ -540,23 +613,22 @@ function App(){
 
   const saveKey=()=>{localStorage.setItem(APIKEY_KEY,apiKey);setKeySet(true);};
 
-  const manualSave=()=>{
-    try{
-      localStorage.setItem(SAVE_KEY,JSON.stringify({char,messages:messages.slice(-50),savedAt:Date.now()}));
-      setSaveFlash(true); setTimeout(()=>setSaveFlash(false),1500);
-      showNotif("💾 Sauvegardé !","#44aaff");
-    }catch{showNotif("⚠️ Erreur save","#cc4444");}
+  const manualSave=(slotIdx)=>{
+    const idx = typeof slotIdx==="number" ? slotIdx : activeSlot;
+    const ok=writeSlot(SAVE_SLOTS[idx],{char,messages:messages.slice(-50),enemy,savedAt:Date.now()});
+    if(ok){ setSaveFlash(true); setTimeout(()=>setSaveFlash(false),1500); showNotif("💾 Slot "+(idx+1)+" sauvegardé","#44aaff"); }
+    else showNotif("⚠️ Erreur save","#cc4444");
   };
 
-  const loadGame=()=>{
-    const s=loadSave();
-    if(!s){showNotif("Aucune sauvegarde !","#cc4444");return;}
-    // Merge + normalisation des items sans weight (vieilles saves)
+  const loadGame=(slotIdx)=>{
+    const s=readSlot(SAVE_SLOTS[slotIdx]);
+    if(!s){showNotif("Sauvegarde vide !","#cc4444");return;}
+    setActiveSlot(slotIdx);
     const rawSaved = s.char||{};
     const savedChar={...INITIAL_CHAR,...rawSaved,
       inventory:(rawSaved.inventory||[]).map(normalizeItem)};
     setChar(savedChar);
-    const savedMsgs=s.messages||INIT_MSG;
+    const savedMsgs=s.messages&&s.messages.length>0 ? s.messages : [{role:'assistant',text:'Bienvenue. Que fais-tu ?',roll:null}];
     setMessages(savedMsgs);
     // Reconstruire l'historique API — l'API exige user/assistant alternés, commençant par user
     const rawHistory = savedMsgs
@@ -582,25 +654,60 @@ function App(){
     showNotif("📂 Partie chargée","#44aaff");
   };
 
-  const deleteSave=()=>{
-    if(!window.confirm("Supprimer la sauvegarde définitivement ?")) return;
-    localStorage.removeItem(SAVE_KEY);
-    showNotif("🗑 Sauvegarde supprimée","#cc4444");
-    setScreen("game");
-    setChar(INITIAL_CHAR);
-    setMessages(INIT_MSG);
-    history.current=[];
-    setDead(false); setUnconscious(false); setEnemy(null);
+  const deleteSave=(slotIdx)=>{
+    if(!window.confirm("Supprimer le slot "+(slotIdx+1)+" ?")) return;
+    deleteSlot(SAVE_SLOTS[slotIdx]);
+    showNotif("🗑 Slot "+(slotIdx+1)+" supprimé","#cc4444");
+    if(!listSaves().some(Boolean)) setScreen("chargen");
   };
 
   const resetGame=()=>{
-    if(!window.confirm("Effacer la partie actuelle et recommencer ?"))return;
-    localStorage.removeItem(SAVE_KEY);
+    if(!window.confirm("Abandonner cette partie et recommencer ?"))return;
+    deleteSlot(SAVE_SLOTS[activeSlot]);
     setChar(INITIAL_CHAR);
-    setMessages(INIT_MSG);
+    setMessages([]);
     setEnemy(null); setDead(false); setUnconscious(false); history.current=[];
+    setScreen("chargen");
+    showNotif("🔄 Retour à la création","#c8862a");
+    if(soundOnRef.current){SE.stop();SE.curMode=null;soundOnRef.current=false;setSoundOn(false);}
+  };
+
+  const startGame=(slotIdx)=>{
+    const origin = ORIGINS.find(o=>o.id===cg.originId)||ORIGINS[0];
+    const scenario= SCENARIOS.find(s=>s.id===cg.scenarioId)||SCENARIOS[0];
+    const scenarioPrompt = scenario.id==="custom" ? cg.customScenario : scenario.prompt;
+    // Construire le perso de départ avec les bonus d'origine
+    const newChar={
+      ...INITIAL_CHAR,
+      name: cg.name||"Bjorn",
+      stats:{
+        FOR: INITIAL_CHAR.stats.FOR + (origin.bonus.FOR||0),
+        AGI: INITIAL_CHAR.stats.AGI + (origin.bonus.AGI||0),
+        END: INITIAL_CHAR.stats.END + (origin.bonus.END||0),
+        INT: INITIAL_CHAR.stats.INT + (origin.bonus.INT||0),
+        CHA: INITIAL_CHAR.stats.CHA + (origin.bonus.CHA||0),
+        PER: INITIAL_CHAR.stats.PER + (origin.bonus.PER||0),
+      },
+      temp:      INITIAL_CHAR.temp      + (origin.bonus.temp||0),
+      rageMax:   INITIAL_CHAR.rageMax   + (origin.bonus.rageMax||0),
+      hungerMax: origin.bonus.hungerMax || INITIAL_CHAR.hungerMax,
+      thirstMax: origin.bonus.thirstMax || INITIAL_CHAR.thirstMax,
+      hunger:    origin.bonus.hungerMax || INITIAL_CHAR.hunger,
+      thirst:    origin.bonus.thirstMax || INITIAL_CHAR.thirst,
+      inventory: (origin.startItems||[]).map(normalizeItem),
+    };
+    // Mettre à jour le prompt dynamique
+    SYSTEM_PROMPT = buildSystemPrompt(newChar.name, cg.originId, cg.scenarioId, scenarioPrompt) + SYSTEM_PROMPT_SUFFIX;
+    const initText = buildInitMsg(newChar.name, scenario, cg.customScenario);
+    const initMsgs = [{role:"assistant", text:initText, roll:null}];
+    const idx = typeof slotIdx==="number" ? slotIdx : 0;
+    setActiveSlot(idx);
+    setChar(newChar);
+    setMessages(initMsgs);
+    setEnemy(null); setDead(false); setUnconscious(false); history.current=[];
+    // Sauvegarder immédiatement dans le slot choisi
+    writeSlot(SAVE_SLOTS[idx],{char:newChar, messages:initMsgs, enemy:null, savedAt:Date.now()});
     setScreen("game");
-    showNotif("🔄 Nouvelle partie","#c8862a");
     if(soundOnRef.current) SE.play("explore",1);
   };
 
@@ -647,7 +754,7 @@ function App(){
       if(c.xp>=c.xpNext){
         c.level++; c.xp-=c.xpNext; c.xpNext=Math.floor(c.xpNext*1.6);
         c.hpMax+=10; c.hp=Math.min(c.hpMax,c.hp+10);
-        c.staminaMax+=6; c.stats.FOR+=1; c.stats.END+=1;
+        c.staminaMax+=8; c.stats.FOR+=1; c.stats.END+=1; // +8% de staminaMax/niveau
         const ns=ALL_SKILLS.filter(sk=>sk.unlockLv===c.level&&!c.skills.find(s=>s.id===sk.id));
         if(ns.length>0){c.skills=[...c.skills,...ns];setNewSkill(ns[0]);setTimeout(()=>setNewSkill(null),4000);}
         showNotif("⚔️ NIVEAU "+c.level+" ! +10 PV +1 FOR +1 END","#ffd700");
@@ -816,7 +923,7 @@ function App(){
   // Récupération d'inconscience — Bjorn reprend conscience lentement
   const wakeUp=()=>{
     setChar(p=>{
-      const sta=clamp(p.stamina+18,0,p.staminaMax);
+      const sta=clamp(p.stamina+25,0,p.staminaMax); // ~25% de récupération sur 100
       return {...p,stamina:sta,unconscious:sta>0?false:true};
     });
     showNotif("💤 Bjorn reprend conscience...","#aaaaff");
@@ -848,50 +955,155 @@ function App(){
   const warnings=getSurvivalStatus(char);
   const isDanger=char.hp/char.hpMax<0.25||char.hunger<20||char.thirst<20||char.temp<0||char.temp>40;
 
-  // ══ ÉCRAN DE DÉMARRAGE ═══════════════════════════════════════════════════════
+  // ══ MENU PRINCIPAL ═══════════════════════════════════════════════════════════
   if(screen==="start"){
-    const s=loadSave();
-    const savedAt=s?.savedAt ? new Date(s.savedAt) : null;
-    const savedStr=savedAt ? savedAt.toLocaleDateString("fr-FR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}) : "—";
-    const sc=s?.char||INITIAL_CHAR;
+    const saves=listSaves();
+    const hasAny=saves.some(Boolean);
+    const C={h:"100%",background:"#0a0704",display:"flex",flexDirection:"column",alignItems:"center",overflowY:"auto",padding:"24px 20px",fontFamily:"'EB Garamond',serif"};
     return(
-      <div style={{height:"100%",background:"#0a0704",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24,fontFamily:"'EB Garamond',serif"}}>
-        <div style={{fontSize:22,fontFamily:"'Cinzel',serif",color:"#c8862a",letterSpacing:2,textAlign:"center",marginBottom:4}}>⚔ SURVIVING<br/>THE DUNGEON</div>
-        <div style={{fontSize:10,color:"#7a5030",letterSpacing:3,marginBottom:28,textAlign:"center"}}>AS A BARBARIAN</div>
+      <div style={C}>
+        <div style={{fontSize:24,fontFamily:"'Cinzel',serif",color:"#c8862a",letterSpacing:2,textAlign:"center",marginBottom:4,marginTop:8}}>⚔ SURVIVING<br/>THE DUNGEON</div>
+        <div style={{fontSize:10,color:"#7a5030",letterSpacing:3,marginBottom:24,textAlign:"center"}}>AS A BARBARIAN</div>
 
-        <div style={{width:"100%",maxWidth:360,background:"#0e0a02",border:"1px solid #3a2010",borderRadius:12,padding:"18px 20px",marginBottom:20}}>
-          <div style={{fontSize:10,color:"#5a3818",fontFamily:"'Cinzel',serif",letterSpacing:2,marginBottom:12}}>▸ SAUVEGARDE</div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
-            {[
-              {label:"Personnage",val:sc.name+" Nv."+sc.level},
-              {label:"Lieu",      val:sc.location},
-              {label:"PV",        val:sc.hp+"/"+sc.hpMax},
-              {label:"Or",        val:sc.gold+"g"},
-              {label:"Jour",      val:"J"+sc.day+" M"+sc.month},
-              {label:"Sauvé le",  val:savedStr},
-            ].map((r,i)=>(
-              <div key={i} style={{background:"#120a02",border:"1px solid #2a1808",borderRadius:6,padding:"6px 10px"}}>
-                <div style={{fontSize:9,color:"#5a3818",letterSpacing:1}}>{r.label}</div>
-                <div style={{fontSize:12,color:"#d4a870"}}>{r.val}</div>
+        {hasAny&&<div style={{width:"100%",maxWidth:380,marginBottom:20}}>
+          <div style={{fontSize:10,color:"#5a3818",fontFamily:"'Cinzel',serif",letterSpacing:2,marginBottom:10}}>▸ SAUVEGARDES</div>
+          {saves.map((s,idx)=>!s?null:(
+            <div key={idx} style={{background:"#0e0a02",border:"1px solid #3a2010",borderRadius:10,padding:"12px 14px",marginBottom:8}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                <span style={{fontFamily:"'Cinzel',serif",fontSize:11,color:"#c8862a"}}>SLOT {idx+1}</span>
+                <span style={{fontSize:9,color:"#5a3818"}}>{s.savedAt?new Date(s.savedAt).toLocaleDateString("fr-FR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}):""}</span>
               </div>
-            ))}
-          </div>
-          <div style={{display:"flex",gap:8,marginTop:8}}>
-            <button onClick={loadGame}
-              style={{flex:2,background:"linear-gradient(135deg,#0a3010,#1a5020)",border:"1px solid #44aa66",borderRadius:8,color:"#88dd99",padding:"11px",cursor:"pointer",fontFamily:"'Cinzel',serif",fontSize:13,letterSpacing:1}}>
-              ▶ Continuer
-            </button>
-            <button onClick={deleteSave}
-              style={{flex:1,background:"#100404",border:"1px solid #5a1010",borderRadius:8,color:"#884444",padding:"11px",cursor:"pointer",fontFamily:"'Cinzel',serif",fontSize:11}}>
-              🗑 Supprimer
-            </button>
-          </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:4,marginBottom:8}}>
+                {[
+                  {l:"Perso",v:(s.char?.name||"?")+` Nv.${s.char?.level||1}`},
+                  {l:"PV",   v:`${s.char?.hp||"?"}/${s.char?.hpMax||"?"}`},
+                  {l:"Or",   v:`${s.char?.gold||0}g`},
+                ].map((r,i)=>(
+                  <div key={i} style={{background:"#120a02",borderRadius:6,padding:"4px 8px"}}>
+                    <div style={{fontSize:8,color:"#5a3818"}}>{r.l}</div>
+                    <div style={{fontSize:11,color:"#d4a870"}}>{r.v}</div>
+                  </div>
+                ))}
+              </div>
+              <div style={{display:"flex",gap:7}}>
+                <button onClick={()=>loadGame(idx)}
+                  style={{flex:2,background:"linear-gradient(135deg,#0a3010,#1a5020)",border:"1px solid #44aa66",borderRadius:8,color:"#88dd99",padding:"9px",cursor:"pointer",fontFamily:"'Cinzel',serif",fontSize:11}}>
+                  ▶ Continuer
+                </button>
+                <button onClick={()=>deleteSave(idx)}
+                  style={{flex:1,background:"#100404",border:"1px solid #5a1010",borderRadius:8,color:"#884444",padding:"9px",cursor:"pointer",fontFamily:"'Cinzel',serif",fontSize:11}}>
+                  🗑
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>}
+
+        <button onClick={()=>setScreen("chargen")}
+          style={{width:"100%",maxWidth:380,background:"linear-gradient(135deg,#8a4a10,#c8762a)",border:"1px solid #c8762a",borderRadius:10,color:"#ffd4a0",padding:"13px",cursor:"pointer",fontFamily:"'Cinzel',serif",fontSize:14,letterSpacing:2,marginBottom:12}}>
+          + NOUVELLE PARTIE
+        </button>
+        <button onClick={()=>{localStorage.removeItem(APIKEY_KEY);setKeySet(false);setApiKey("");}}
+          style={{fontSize:10,color:"#3a2808",background:"transparent",border:"none",cursor:"pointer",fontFamily:"'Cinzel',serif"}}>
+          🔑 Changer la clé API
+        </button>
+      </div>
+    );
+  }
+
+  // ══ CRÉATION DE PERSONNAGE ═══════════════════════════════════════════════════
+  if(screen==="chargen"){
+    const freeSlot = listSaves().findIndex(s=>!s);
+    const hasSlot  = freeSlot !== -1;
+    const saves    = listSaves();
+    const anySlot  = saves.some(Boolean);
+    return(
+      <div style={{height:"100%",background:"#0a0704",display:"flex",flexDirection:"column",alignItems:"center",overflowY:"auto",padding:"20px 18px 40px",fontFamily:"'EB Garamond',serif",color:"#d4b896"}}>
+        <div style={{fontSize:18,fontFamily:"'Cinzel',serif",color:"#c8862a",letterSpacing:2,textAlign:"center",marginBottom:4}}>⚔ CRÉATION DU BARBARE</div>
+        <div style={{fontSize:10,color:"#7a5030",letterSpacing:2,marginBottom:20,textAlign:"center"}}>CONFIGURE TON PERSONNAGE</div>
+
+        {/* Nom */}
+        <div style={{width:"100%",maxWidth:380,marginBottom:14}}>
+          <div style={{fontSize:10,color:"#5a3818",fontFamily:"'Cinzel',serif",letterSpacing:2,marginBottom:6}}>▸ NOM DU BARBARE</div>
+          <input value={cg.name} onChange={e=>setCg(p=>({...p,name:e.target.value}))} maxLength={20}
+            placeholder="Bjorn..."
+            style={{width:"100%",background:"#120a02",border:"1px solid #3a2010",borderRadius:8,color:"#d4b896",padding:"10px 12px",fontSize:14,outline:"none"}}/>
         </div>
 
-        <button onClick={()=>{localStorage.removeItem(SAVE_KEY);setChar(INITIAL_CHAR);setMessages(INIT_MSG);history.current=[];setEnemy(null);setDead(false);setUnconscious(false);setScreen("game");}}
-          style={{width:"100%",maxWidth:360,background:"#1a0e04",border:"1px solid #3a2010",borderRadius:8,color:"#7a5030",padding:"10px",cursor:"pointer",fontFamily:"'Cinzel',serif",fontSize:11,letterSpacing:1}}>
-          + Nouvelle partie (efface la save)
-        </button>
+        {/* Origine */}
+        <div style={{width:"100%",maxWidth:380,marginBottom:14}}>
+          <div style={{fontSize:10,color:"#5a3818",fontFamily:"'Cinzel',serif",letterSpacing:2,marginBottom:8}}>▸ ORIGINE</div>
+          {ORIGINS.map(o=>(
+            <div key={o.id} onClick={()=>setCg(p=>({...p,originId:o.id}))}
+              style={{background:cg.originId===o.id?"#1a0e04":"#0e0a02",border:"1px solid "+(cg.originId===o.id?"#c8762a":"#2a1808"),borderRadius:8,padding:"10px 12px",marginBottom:6,cursor:"pointer"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <span style={{fontFamily:"'Cinzel',serif",fontSize:12,color:cg.originId===o.id?"#e8a84a":"#a87848"}}>{o.label}</span>
+                {cg.originId===o.id&&<span style={{fontSize:10,color:"#c8762a"}}>✓</span>}
+              </div>
+              <div style={{fontSize:11,color:"#5a3818",marginTop:3}}>{o.desc}</div>
+              <div style={{fontSize:10,color:"#7a5030",marginTop:4}}>
+                {Object.entries(o.bonus).filter(([k])=>!["hungerMax","thirstMax","temp"].includes(k)).map(([k,v])=>
+                  <span key={k} style={{marginRight:8}}>{k} {v>0?"+"+v:v}</span>
+                )}
+                {o.startItems.map(i=><span key={i.name} style={{color:"#aa7722",marginRight:6}}>{i.icon}{i.name}</span>)}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Scénario */}
+        <div style={{width:"100%",maxWidth:380,marginBottom:14}}>
+          <div style={{fontSize:10,color:"#5a3818",fontFamily:"'Cinzel',serif",letterSpacing:2,marginBottom:8}}>▸ SCÉNARIO</div>
+          {SCENARIOS.map(s=>(
+            <div key={s.id} onClick={()=>setCg(p=>({...p,scenarioId:s.id}))}
+              style={{background:cg.scenarioId===s.id?"#1a0e04":"#0e0a02",border:"1px solid "+(cg.scenarioId===s.id?"#c8762a":"#2a1808"),borderRadius:8,padding:"10px 12px",marginBottom:6,cursor:"pointer"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <span style={{fontFamily:"'Cinzel',serif",fontSize:12,color:cg.scenarioId===s.id?"#e8a84a":"#a87848"}}>{s.label}</span>
+                {cg.scenarioId===s.id&&<span style={{fontSize:10,color:"#c8762a"}}>✓</span>}
+              </div>
+              <div style={{fontSize:11,color:"#5a3818",marginTop:3}}>{s.desc}</div>
+            </div>
+          ))}
+          {cg.scenarioId==="custom"&&(
+            <textarea value={cg.customScenario} onChange={e=>setCg(p=>({...p,customScenario:e.target.value}))}
+              placeholder="Décris le contexte de ta partie..."
+              style={{width:"100%",background:"#120a02",border:"1px solid #3a2010",borderRadius:8,color:"#d4b896",padding:"10px 12px",fontSize:13,marginTop:6,minHeight:80,outline:"none",resize:"vertical"}}/>
+          )}
+        </div>
+
+        {/* Slot de sauvegarde */}
+        <div style={{width:"100%",maxWidth:380,marginBottom:20}}>
+          <div style={{fontSize:10,color:"#5a3818",fontFamily:"'Cinzel',serif",letterSpacing:2,marginBottom:8}}>▸ SLOT DE SAUVEGARDE</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
+            {SAVE_SLOTS.map((key,idx)=>{
+              const s=readSlot(key);
+              const isFull=!!s;
+              return(
+                <div key={idx} onClick={()=>setCg(p=>({...p,saveSlot:idx}))}
+                  style={{background:cg.saveSlot===idx?"#1a0e04":"#0e0a02",border:"1px solid "+(cg.saveSlot===idx?"#c8762a":isFull?"#5a3010":"#2a1808"),borderRadius:8,padding:"8px",cursor:"pointer",textAlign:"center"}}>
+                  <div style={{fontFamily:"'Cinzel',serif",fontSize:11,color:cg.saveSlot===idx?"#e8a84a":isFull?"#aa6622":"#5a3818"}}>SLOT {idx+1}</div>
+                  <div style={{fontSize:9,color:isFull?"#7a4020":"#3a2808",marginTop:2}}>{isFull?(s.char?.name||"Occupé"):"Vide"}</div>
+                </div>
+              );
+            })}
+          </div>
+          {cg.saveSlot!==undefined && readSlot(SAVE_SLOTS[cg.saveSlot]) &&
+            <div style={{fontSize:10,color:"#cc6622",marginTop:6,textAlign:"center"}}>⚠ Ce slot sera écrasé</div>
+          }
+        </div>
+
+        {/* Boutons */}
+        <div style={{width:"100%",maxWidth:380,display:"flex",flexDirection:"column",gap:8}}>
+          <button onClick={()=>{ const slot=cg.saveSlot!==undefined?cg.saveSlot:(listSaves().findIndex(s=>!s)>=0?listSaves().findIndex(s=>!s):0); startGame(slot); }}
+            disabled={!cg.name?.trim()}
+            style={{background:cg.name?.trim()?"linear-gradient(135deg,#8a4a10,#c8762a)":"#1a0e04",border:"1px solid #c8762a",borderRadius:10,color:"#ffd4a0",padding:"13px",cursor:cg.name?.trim()?"pointer":"not-allowed",fontFamily:"'Cinzel',serif",fontSize:14,letterSpacing:2}}>
+            ⚔ COMMENCER L'AVENTURE
+          </button>
+          {anySlot&&<button onClick={()=>setScreen("start")}
+            style={{background:"transparent",border:"1px solid #2a1808",borderRadius:8,color:"#5a3818",padding:"9px",cursor:"pointer",fontFamily:"'Cinzel',serif",fontSize:11}}>
+            ← Retour aux sauvegardes
+          </button>}
+        </div>
       </div>
     );
   }
@@ -1089,6 +1301,14 @@ function App(){
               style={{width:"100%",background:"#080c10",border:"1px solid #1a2a3a",borderRadius:8,color:"#4466aa",padding:"9px",cursor:"pointer",fontSize:11,fontFamily:"'Cinzel',serif",marginBottom:6}}>
               📂 Menu sauvegardes
             </button>
+            <div style={{display:"flex",gap:6,marginBottom:6}}>
+              {SAVE_SLOTS.map((_,idx)=>(
+                <button key={idx} onClick={()=>manualSave(idx)}
+                  style={{flex:1,background:idx===activeSlot?"#040e08":"#0a0804",border:"1px solid "+(idx===activeSlot?"#1a6030":"#1a1808"),borderRadius:6,color:idx===activeSlot?"#44aa66":"#3a2808",padding:"7px 4px",cursor:"pointer",fontSize:10,fontFamily:"'Cinzel',serif"}}>
+                  💾 S{idx+1}
+                </button>
+              ))}
+            </div>
             <button onClick={()=>{localStorage.removeItem(APIKEY_KEY);setKeySet(false);setApiKey("");}}
               style={{width:"100%",background:"#0a0808",border:"1px solid #2a1010",borderRadius:8,color:"#5a3030",padding:"8px",cursor:"pointer",fontSize:10,fontFamily:"'Cinzel',serif",marginBottom:4}}>
               🔑 Changer la clé API
@@ -1145,7 +1365,7 @@ function App(){
               <div style={{fontSize:9,color:"#4a3808",fontFamily:"'Cinzel',serif",letterSpacing:2,marginBottom:5}}>▸ RÈGLES DE SURVIE</div>
               <div style={{fontSize:11,color:"#4a3808",lineHeight:1.9}}>
                 🍖 Faim 0% → -5 PV/action<br/>
-                💧 Soif 0% → -8 PV/action + stamina=0<br/>
+                💧 Soif 0% → -8 PV/action + drain END rapide<br/>
                 🥶 Temp &lt;0°C → -6 PV/action<br/>
                 🔥 Temp &gt;40°C → -4 PV + soif rapide<br/>
                 🎲 D100 : 80+=Crit | 51-79=Succès | 21-50=Échec | ≤20=Désastre
