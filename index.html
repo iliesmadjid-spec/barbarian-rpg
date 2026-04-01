@@ -58,9 +58,6 @@ class SoundEngine {
     this.reverbDry.connect(this.master);
   }
 
-  // Nœud de sortie mixé (dry+reverb)
-  _out(){ return { dry:this.reverbDry, wet:this.reverb }; }
-
   stop(){
     this.nodes.forEach(n=>{try{n.stop&&n.stop();n.disconnect&&n.disconnect();}catch{}});
     this.nodes=[];
@@ -133,10 +130,11 @@ class SoundEngine {
       },delay);
       this.nodes.push({stop:()=>clearTimeout(t)});
     };
-    // 2-3 sources de gouttes décalées pour plus de naturel
+    // 2-3 sources décalées — IDs trackés pour pouvoir les arrêter
     schedDrip();
-    setTimeout(schedDrip, 1500+Math.random()*2000);
-    setTimeout(schedDrip, 4000+Math.random()*3000);
+    const t2=setTimeout(schedDrip, 1500+Math.random()*2000);
+    const t3=setTimeout(schedDrip, 4000+Math.random()*3000);
+    this.nodes.push({stop:()=>clearTimeout(t2)},{stop:()=>clearTimeout(t3)});
   }
 
   // ── DRONE TONAL ── pour renforcer l'atmosphère
@@ -388,7 +386,8 @@ function getSurvivalStatus(char){
   else if(char.temp<5)  warnings.push({text:"🥶 Gelé",color:"#66aaee"});
   else if(char.temp>40) warnings.push({text:"🔥 COUP DE CHALEUR — PV en chute !",color:"#ff8822",blink:true});
   else if(char.temp>35) warnings.push({text:"🔥 Surchauffé",color:"#ee6622"});
-  if(char.stamina<=0)   warnings.push({text:"💤 Inconscient !",color:"#aaaaff",blink:true});
+  // Stamina warning — ne pas doubler avec char.unconscious
+  if(!char.unconscious && char.stamina<=0) warnings.push({text:"💤 Endurance à zéro !",color:"#aaaaff",blink:true});
   else if(char.stamina/char.staminaMax<0.2) warnings.push({text:"⚡ Épuisé — malus physique",color:"#4488cc"});
   return warnings;
 }
@@ -454,7 +453,7 @@ function App(){
     if(!keySet||screen!=="game")return;
     // Ne sauvegarde que si la partie a vraiment commencé (au moins 1 message user)
     if(messages.length<2)return;
-    try{localStorage.setItem(SAVE_KEY,JSON.stringify({char,messages:messages.slice(-50),savedAt:Date.now()}));}catch{}
+    try{localStorage.setItem(SAVE_KEY,JSON.stringify({char,messages:messages.slice(-50),enemy,savedAt:Date.now()}));}catch{}
   },[char,messages,keySet,screen]);
 
   useEffect(()=>{if(tab==="journal")endRef.current?.scrollIntoView({behavior:"smooth"});},[messages,tab]);
@@ -513,10 +512,18 @@ function App(){
   const loadGame=()=>{
     const s=loadSave();
     if(!s){showNotif("Aucune sauvegarde !","#cc4444");return;}
-    setChar(s.char||INITIAL_CHAR);
-    setMessages(s.messages||INIT_MSG);
-    history.current=[];
-    setDead(false); setUnconscious(false); setEnemy(null);
+    const savedChar={...INITIAL_CHAR,...s.char}; // merge pour éviter les champs manquants
+    setChar(savedChar);
+    const savedMsgs=s.messages||INIT_MSG;
+    setMessages(savedMsgs);
+    // Reconstruire l'historique API depuis les messages sauvegardés (10 derniers)
+    history.current=savedMsgs.slice(-10).map(m=>({
+      role:m.role==="assistant"?"assistant":"user",
+      content:m.text||""
+    }));
+    setDead(savedChar.hp<=0);
+    setUnconscious(savedChar.unconscious||false);
+    setEnemy(s.enemy||null);
     setScreen("game");
     showNotif("📂 Partie chargée","#44aaff");
   };
@@ -586,6 +593,19 @@ function App(){
       }
     }
     if(d.locationChange) c.location=d.locationChange;
+
+    // TEMPS — avancer heure/jour/mois
+    const mins = (d.timeChange !== undefined && d.timeChange !== null) ? Math.max(1, Number(d.timeChange)||10) : 10;
+    c._totalMins = (Number(c._totalMins)||360) + mins;
+    const totalH = Math.floor(c._totalMins / 60);
+    c.hour  = totalH % 24;
+    c.day   = 1 + Math.floor(totalH / 24) % 30;
+    c.month = 1 + Math.floor(totalH / (24*30));
+
+    // INCONSCIENCE — stamina tombe à 0
+    if(c.stamina<=0 && !c.unconscious) c.unconscious=true;
+    if(c.unconscious && c.stamina>15)  c.unconscious=false;
+
     return c;
   },[]);
 
@@ -701,6 +721,17 @@ function App(){
     }));
   };
 
+  // Récupération d'inconscience — Bjorn reprend conscience lentement
+  const wakeUp=()=>{
+    setChar(p=>{
+      const sta=clamp(p.stamina+18,0,p.staminaMax);
+      return {...p,stamina:sta,unconscious:sta>0?false:true};
+    });
+    showNotif("💤 Bjorn reprend conscience...","#aaaaff");
+    setMessages(prev=>[...prev,{role:"assistant",text:"Bjorn reprend lentement conscience, épuisé. Son corps refuse de le laisser mourir — pour l'instant. Il parvient à se relever, chancelant. Que fais-tu ?",roll:null}]);
+    if(soundOnRef.current) SE.play("explore",char.hp/char.hpMax);
+  };
+
   // ══ ÉCRAN CLÉ API ════════════════════════════════════════════════════════════
   if(!keySet) return(
     <div style={{height:"100%",background:"#0a0704",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24,fontFamily:"'EB Garamond',serif"}}>
@@ -765,7 +796,7 @@ function App(){
           </div>
         </div>
 
-        <button onClick={()=>{localStorage.removeItem(SAVE_KEY);setChar(INITIAL_CHAR);setMessages(INIT_MSG);history.current=[];setScreen("game");}}
+        <button onClick={()=>{localStorage.removeItem(SAVE_KEY);setChar(INITIAL_CHAR);setMessages(INIT_MSG);history.current=[];setEnemy(null);setDead(false);setUnconscious(false);setScreen("game");}}
           style={{width:"100%",maxWidth:360,background:"#1a0e04",border:"1px solid #3a2010",borderRadius:8,color:"#7a5030",padding:"10px",cursor:"pointer",fontFamily:"'Cinzel',serif",fontSize:11,letterSpacing:1}}>
           + Nouvelle partie (efface la save)
         </button>
@@ -1014,10 +1045,12 @@ function App(){
             style={{flex:1,background:"#120a02",border:"1px solid "+(dead?"#5a1010":"#3a2010"),borderRadius:10,color:dead?"#5a2020":"#d4b896",padding:"10px 12px",fontSize:14,outline:"none"}}
             value={input} onChange={e=>setInput(e.target.value)}
             onKeyDown={e=>e.key==="Enter"&&!e.shiftKey&&send()}
-            placeholder={dead?"☠ Bjorn est mort. Recommence.":char.unconscious?"💤 Bjorn est inconscient...":"Que fais-tu, barbare ?"} disabled={loading||dead||char.unconscious}/>
-          <button onClick={dead?resetGame:send} disabled={loading&&!dead}
-            style={{background:dead?"#3a0404":loading?"#1a0e04":"linear-gradient(135deg,#8a4a10,#c8762a)",border:"1px solid "+(dead?"#aa2222":"#c8762a"),borderRadius:10,color:"#ffd4a0",padding:"10px 14px",cursor:"pointer",fontFamily:"'Cinzel',serif",fontSize:11,letterSpacing:1,flexShrink:0}}>
-            {dead?"↺":char.unconscious?"💤":loading?"...":"AGIR"}
+            placeholder={dead?"☠ Bjorn est mort. Recommence.":char.unconscious?"💤 Bjorn est inconscient — il doit récupérer...":"Que fais-tu, barbare ?"} disabled={loading||dead||char.unconscious}/>
+          <button
+            onClick={dead?resetGame:char.unconscious?wakeUp:send}
+            disabled={loading&&!dead&&!char.unconscious}
+            style={{background:dead?"#3a0404":char.unconscious?"#0a0a2a":loading?"#1a0e04":"linear-gradient(135deg,#8a4a10,#c8762a)",border:"1px solid "+(dead?"#aa2222":char.unconscious?"#aaaaff":"#c8762a"),borderRadius:10,color:"#ffd4a0",padding:"10px 14px",cursor:"pointer",fontFamily:"'Cinzel',serif",fontSize:11,letterSpacing:1,flexShrink:0}}>
+            {dead?"↺":char.unconscious?"💤 Récupérer":loading?"...":"AGIR"}
           </button>
         </div>
       )}
