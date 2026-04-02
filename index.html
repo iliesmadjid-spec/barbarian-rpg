@@ -333,7 +333,7 @@ function buildSystemPrompt(charName, originId, scenarioId, scenarioPrompt, diffI
     +"DIFFICULTÉ : "+diff.label.toUpperCase()+" — "+diff.promptHint;
 }
 
-const SYSTEM_PROMPT_SUFFIX = "\n\nRÈGLES FONDAMENTALES :\n- Le jeu est TRÈS DIFFICILE. Économie brutale : objets rares, chers.\n- Le personnage n'a RIEN au départ sauf équipement d'origine. Tout doit être gagné.\n- Eau rare. Nourriture encore plus rare. Jamais gratuit.\n- Température : niveaux profonds glaciaux, certaines zones brûlantes.\n- Les PNJs sont méfiants. Pas de filet de sécurité.\n- Ton : brutal, viscéral, sans pitié. Max 4 phrases.\n\nRÈGLES DE DÉS — OBLIGATOIRE :\n- Le contexte fournit TOUJOURS ROLL:X=RÉSULTAT pour chaque action.\n- Narrer en cohérence STRICTE : CRITIQUE(80+)=exploit | SUCCÈS(51-79)=réussi | ÉCHEC(21-50)=raté | DÉSASTRE(≤20)=catastrophe\n- Ne jamais décrire un succès si le roll indique ÉCHEC, et vice-versa.\n- En combat : fournis TOUJOURS enemyName et enemyHp.\n- hpChange en combat : négatif si coups reçus.\n- xpGain : 10-30 XP par ennemi vaincu.\n\nRÈGLES DE SURVIE :\n- Repos/parler : faim 0, soif 0, temps +6h ou +10min\n- Explorer : faim -3, soif -3, temps +30min\n- Combat court : faim -4, soif -6, temps +10min\n- Combat long/fuite : faim -6, soif -9, temps +20min\n- Compétence rage : faim -5, soif -7, temps +10min\n- Manger : faim +25à+40 | Boire : soif +30à+50\n\nFORMAT JSON OBLIGATOIRE dans un bloc ```json``` AVANT le texte :\n{\n  \"roll\": <1-100 ou null>,\n  \"success\": <true/false/null>,\n  \"hpChange\": <nombre>,\n  \"staminaChange\": <nombre>,\n  \"rageChange\": <nombre>,\n  \"goldChange\": <nombre>,\n  \"xpGain\": <nombre>,\n  \"hungerChange\": <nombre OBLIGATOIRE>,\n  \"thirstChange\": <nombre OBLIGATOIRE>,\n  \"tempChange\": <variation C ou 0>,\n  \"timeChange\": <minutes OBLIGATOIRE min 5>,\n  \"event\": <combat|explore|dialogue|loot|rest|null>,\n  \"enemyHp\": <null ou 0-100>,\n  \"enemyName\": <null ou string>,\n  \"locationChange\": <null ou string>,\n  \"lootItem\": <null ou {name,type,icon,qty,weight}>\n}";
+const SYSTEM_PROMPT_SUFFIX = "\n\nRÈGLES FONDAMENTALES :\n- Le jeu est TRÈS DIFFICILE. Économie brutale : objets rares, chers.\n- Le personnage n'a RIEN au départ sauf équipement d'origine. Tout doit être gagné.\n- Eau rare. Nourriture encore plus rare. Jamais gratuit.\n- Température : niveaux profonds glaciaux, certaines zones brûlantes.\n- Les PNJs sont méfiants. Pas de filet de sécurité.\n- Ton : brutal, viscéral, sans pitié. Max 4 phrases.\n\nRÈGLES DE DÉS — OBLIGATOIRE :\n- Le contexte fournit TOUJOURS ROLL:X=RÉSULTAT pour chaque action.\n- Le ROLL dans le contexte EST le résultat officiel. Tu DOIS narrer en conséquence STRICTE.\n- CRITIQUE(80+)=exploit | SUCCÈS(51-79)=réussi | ÉCHEC(21-50)=raté | DÉSASTRE(≤20)=catastrophe\n- INTERDIT de narrer un succès si ROLL indique ÉCHEC ou DÉSASTRE. INTERDIT de narrer un échec si ROLL indique SUCCÈS ou CRITIQUE.\n- Ne génère PAS de champ roll ni success dans le JSON — ils sont gérés automatiquement.\n- En combat : fournis TOUJOURS enemyName et enemyHp.\n- hpChange en combat : négatif si coups reçus.\n- xpGain : 10-30 XP par ennemi vaincu.\n\nRÈGLES DE SURVIE :\n- Repos/parler : faim 0, soif 0, temps +6h ou +10min\n- Explorer : faim -3, soif -3, temps +30min\n- Combat court : faim -4, soif -6, temps +10min\n- Combat long/fuite : faim -6, soif -9, temps +20min\n- Compétence rage : faim -5, soif -7, temps +10min\n- Manger : faim +25à+40 | Boire : soif +30à+50\n\nFORMAT JSON OBLIGATOIRE dans un bloc ```json``` AVANT le texte :\n{\n  // roll et success sont calculés côté client, ne pas les fournir\n  \"hpChange\": <nombre>,\n  \"staminaChange\": <nombre>,\n  \"rageChange\": <nombre>,\n  \"goldChange\": <nombre>,\n  \"xpGain\": <nombre>,\n  \"hungerChange\": <nombre OBLIGATOIRE>,\n  \"thirstChange\": <nombre OBLIGATOIRE>,\n  \"tempChange\": <variation C ou 0>,\n  \"timeChange\": <minutes OBLIGATOIRE min 5>,\n  \"event\": <combat|explore|dialogue|loot|rest|null>,\n  \"enemyHp\": <null ou 0-100>,\n  \"enemyName\": <null ou string>,\n  \"locationChange\": <null ou string>,\n  \"lootItem\": <null ou {name,type,icon,qty,weight}>\n}";
 // Référence statique (écrasée au début de partie)
 // Ces variables sont initialisées ici mais GÉRÉES via useRef dans App
 // pour éviter les closures stales en React
@@ -765,14 +765,19 @@ function App(){
       c.xp+=Math.round(d.xpGain * ACTIVE_DIFF_GLOBAL.xpMult);
       if(c.xp>=c.xpNext){
         c.level++; c.xp-=c.xpNext; c.xpNext=Math.floor(c.xpNext*1.6);
-        c.hpMax+=10; c.hp=Math.min(c.hpMax,c.hp+10);
-        c.staminaMax+=8; c.stats.FOR+=1; c.stats.END+=1; // +8% de staminaMax/niveau
+        c.hpMax+=10; c.hp=Math.min(c.hpMax, c.hp+10);
+        c.staminaMax+=8; c.stamina=Math.min(c.staminaMax, c.stamina+8);
+        c.stats.FOR+=1; c.stats.END+=1;
         const ns=ALL_SKILLS.filter(sk=>sk.unlockLv===c.level&&!c.skills.find(s=>s.id===sk.id));
         if(ns.length>0){c.skills=[...c.skills,...ns];setNewSkill(ns[0]);setTimeout(()=>setNewSkill(null),4000);}
-        showNotif("⚔️ NIVEAU "+c.level+" ! +10 PV +1 FOR +1 END","#ffd700");
+        showNotif("⚔️ NIVEAU "+c.level+" ! +10 PV +8 END +1 FOR +1 END","#ffd700");
       }
     }
     if(d.locationChange) c.location=d.locationChange;
+    // Rage se dissipe hors combat (cooldown naturel)
+    if(d.event && d.event!=="combat" && c.rage>0){
+      c.rage = Math.max(0, c.rage - Math.floor(c.rage * 0.15));
+    }
 
     // TEMPS — avancer heure/jour/mois
     const mins = (d.timeChange !== undefined && d.timeChange !== null) ? Math.max(1, Number(d.timeChange)||10) : 10;
@@ -794,7 +799,8 @@ function App(){
     if(!input.trim()||loading||dead||char.unconscious)return;
     const txt=input.trim(); setInput(""); setLoad(true);
     setMessages(p=>[...p,{role:"user",text:txt}]);
-    history.current.push({role:"user",content:txt});
+    // history push APRÈS la vérification d'erreur — évite les doublons user/user si API fail
+    const historyUserMsg = {role:"user",content:txt};
 
     const mal=getSurvivalMalus(char);
     const inv=char.inventory.length>0?char.inventory.map(i=>(i.icon||"📦")+i.name+"["+(i.type||"misc")+"]×"+(i.qty||1)).join(", "):"AUCUN";
@@ -821,6 +827,7 @@ function App(){
     const ctx=`[${dateStr} | DIFF:${activeDiffRef.current.label} | PV:${char.hp}/${char.hpMax} END:${char.stamina}/${char.staminaMax} RAGE:${char.rage}/${char.rageMax} Or:${char.gold}g Nv:${char.level}${char.unconscious?" | INCONSCIENT":""}${weightStr} | Lieu:${char.location} | Faim:${char.hunger}% Soif:${char.thirst}% Temp:${char.temp}°C | FOR:${char.stats.FOR+mal.forMod} AGI:${char.stats.AGI+mal.agiMod} | Inventaire:${inv}${combatCtx}]`;
 
     try{
+      history.current.push(historyUserMsg); // push seulement si pas de throw avant fetch
       const res=await fetch("https://api.anthropic.com/v1/messages",{
         method:"POST",
         headers:{"Content-Type":"application/json","x-api-key":apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
@@ -833,14 +840,22 @@ function App(){
 
       let delta={roll:null,success:null,hpChange:0,staminaChange:0,rageChange:0,goldChange:0,xpGain:0,hungerChange:undefined,thirstChange:undefined,tempChange:undefined,event:null,enemyHp:null,enemyName:null,locationChange:null,lootItem:null};
       let narrative=raw;
-      const jm=raw.match(/```json\s*([\s\S]*?)```/);
-      if(jm){try{delta={...delta,...JSON.parse(jm[1])};}catch{} narrative=raw.replace(/```json[\s\S]*?```/,"").trim();}
+      const jm=raw.match(/```json[\s\S]*?```/)||raw.match(/```json\s*([\s\S]*?)```/);
+      if(jm){
+        const jsonStr=(raw.match(/```json\s*([\s\S]*?)```/)||[])[1]||"";
+        try{delta={...delta,...JSON.parse(jsonStr)};}catch(e){/* JSON invalide — on garde les defaults */}
+        narrative=raw.replace(/```json[\s\S]*?```/,"").replace(/```[\s\S]*?```/,"").trim();
+      }
+      // Nettoyer tout bloc ``` résiduel du narrative
+      narrative=narrative.replace(/```(?:[a-z]*)(?:[\s\S]*?)```/g,"").trim();
+      if(!narrative) narrative="(Le donjon garde le silence.)";
 
-      // ── OVERRIDE COMBAT AVEC VALEURS CLIENT-SIDE ──────────────
+      // ── OVERRIDE ROLL TOUJOURS CLIENT-SIDE ───────────────────
+      // Le dé client EST la vérité — jamais le roll de Claude
+      delta.roll    = clientRoll;
+      delta.success = clientRoll >= 51;
+
       if(inCombat && clientDmg){
-        // On force les vrais dégâts calculés côté client
-        delta.roll    = clientRoll;
-        delta.success = clientRoll >= 51;
         delta.hpChange = clientDmg.playerDmg; // négatif si dégâts reçus
         // Mise à jour ennemi avec les vrais dégâts
         const newEHp = clientDmg.newEnemyHp;
@@ -940,8 +955,9 @@ function App(){
   // Récupération d'inconscience — Bjorn reprend conscience lentement
   const wakeUp=()=>{
     setChar(p=>{
-      const sta=clamp(p.stamina+25,0,p.staminaMax); // ~25% de récupération sur 100
-      return {...p,stamina:sta,unconscious:sta>0?false:true};
+      // +40 pour éviter la boucle inconscience si malus survie actifs
+      const sta=clamp(p.stamina+40, 0, p.staminaMax);
+      return {...p, stamina:sta, unconscious:false}; // force le réveil
     });
     showNotif("💤 Bjorn reprend conscience...","#aaaaff");
     setMessages(prev=>[...prev,{role:"assistant",text:"Bjorn reprend lentement conscience, épuisé. Son corps refuse de le laisser mourir — pour l'instant. Il parvient à se relever, chancelant. Que fais-tu ?",roll:null}]);
@@ -1180,7 +1196,8 @@ function App(){
           <button onClick={toggleSound} style={{background:"transparent",border:"1px solid #2a1808",borderRadius:6,color:soundOn?"#c8862a":"#3a2808",padding:"2px 7px",cursor:"pointer",fontSize:12}}>
             {soundOn?"🔊":"🔇"}
           </button>
-          <button onClick={manualSave} style={{background:saveFlash?"#0a2010":"transparent",border:"1px solid "+(saveFlash?"#44aa66":"#2a1808"),borderRadius:6,color:saveFlash?"#44aa66":"#3a2808",padding:"2px 7px",cursor:"pointer",fontSize:11}}>
+          <button onClick={()=>manualSave()} title={"Sauvegarder (Slot "+(activeSlot+1)+")"}
+            style={{background:saveFlash?"#0a2010":"transparent",border:"1px solid "+(saveFlash?"#44aa66":"#2a1808"),borderRadius:6,color:saveFlash?"#44aa66":"#3a2808",padding:"2px 7px",cursor:"pointer",fontSize:11}}>
             {saveFlash?"✓":"💾"}
           </button>
         </div>
