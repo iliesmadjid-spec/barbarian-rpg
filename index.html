@@ -260,7 +260,33 @@ const INITIAL_CHAR={
   // TEMPS
   hour:6,day:1,month:1,_totalMins:360, // 6h00, Jour 1, Mois 1
   unconscious:false,
+  difficulty:"hard",  // difficulté par défaut
+  origin:"sauvage",   // origine pour reconstruction du prompt au chargement
+  scenario:"default", // scénario pour reconstruction du prompt au chargement
 };
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// NIVEAUX DE DIFFICULTÉ
+// ═══════════════════════════════════════════════════════════════════════════════
+const DIFFICULTIES = [
+  { id:"easy",     label:"Facile",    icon:"🌿", desc:"Pour découvrir le jeu. Ennemis faibles, survie généreuse, mort rare.",
+    dmgMult:0.5,  xpMult:1.5, drainMult:0.4, hpBonus:40, statBonus:2, lootMult:1.8,
+    promptHint:"Ton assez accessible. Les ennemis sont faibles, la nourriture et l'eau se trouvent facilement. La mort doit rester rare." },
+  { id:"normal",   label:"Normal",    icon:"⚔️",  desc:"L'expérience équilibrée. Difficile mais gérable.",
+    dmgMult:0.8,  xpMult:1.2, drainMult:0.7, hpBonus:20, statBonus:1, lootMult:1.3,
+    promptHint:"Équilibré. Les ressources sont rares mais trouvables avec de la persévérance." },
+  { id:"hard",     label:"Difficile", icon:"💀",  desc:"Le jeu tel que prévu. Brutal, économie serrée, mort fréquente.",
+    dmgMult:1.0,  xpMult:1.0, drainMult:1.0, hpBonus:0,  statBonus:0, lootMult:1.0,
+    promptHint:"BRUTAL. Ressources rares, ennemis dangereux, chaque décision compte." },
+  { id:"brutal",   label:"Brutal",    icon:"☠️",  desc:"Mort permanente imminente. Tout veut te tuer.",
+    dmgMult:1.4,  xpMult:0.8, drainMult:1.5, hpBonus:-10, statBonus:-1, lootMult:0.7,
+    promptHint:"EXTRÊMEMENT BRUTAL. Ennemis puissants, ressources quasi inexistantes, le donjon est une machine à tuer." },
+  { id:"hardcore", label:"Hardcore",  icon:"💠",  desc:"Mode roguelike. Un seul échec = mort définitive et partie effacée.",
+    dmgMult:1.8,  xpMult:0.6, drainMult:2.0, hpBonus:-20, statBonus:-2, lootMult:0.5,
+    promptHint:"CAUCHEMAR ABSOLU. Mort permanente. Dès que Bjorn meurt, sa save est effacée. Aucune pitié, aucun mercy." },
+];
+
+// Difficulté active — initialisée au lancement, modifiable via cg
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ORIGINES + SCÉNARIOS — doivent être déclarés AVANT buildSystemPrompt
@@ -298,16 +324,21 @@ function buildInitMsg(charName, scenario, customText){
 }
 
 // Le prompt est généré dynamiquement selon le perso et le scénario
-function buildSystemPrompt(charName, originId, scenarioId, scenarioPrompt){
+function buildSystemPrompt(charName, originId, scenarioId, scenarioPrompt, diffId){
   const origin = ORIGINS.find(o=>o.id===originId)||ORIGINS[0];
+  const diff   = DIFFICULTIES.find(d=>d.id===diffId)||DIFFICULTIES[2];
   const scenCtx = scenarioPrompt ? " CONTEXTE SCÉNARIO : "+scenarioPrompt : "";
-  return `Tu es le Maître du Jeu d'un RPG BRUTAL basé sur "Surviving the Game as a Barbarian".
-Le joueur incarne ${charName||"Bjorn"}, un barbare (origine : ${origin.label}) réincarné dans ce cauchemar.${scenCtx}`;
+  return "Tu es le Maître du Jeu d'un RPG basé sur \"Surviving the Game as a Barbarian\".\n"
+    +"Le joueur incarne "+(charName||"Bjorn")+", un barbare (origine : "+origin.label+") réincarné dans ce cauchemar."+scenCtx+"\n"
+    +"DIFFICULTÉ : "+diff.label.toUpperCase()+" — "+diff.promptHint;
 }
 
 const SYSTEM_PROMPT_SUFFIX = "\n\nRÈGLES FONDAMENTALES :\n- Le jeu est TRÈS DIFFICILE. Économie brutale : objets rares, chers.\n- Le personnage n'a RIEN au départ sauf équipement d'origine. Tout doit être gagné.\n- Eau rare. Nourriture encore plus rare. Jamais gratuit.\n- Température : niveaux profonds glaciaux, certaines zones brûlantes.\n- Les PNJs sont méfiants. Pas de filet de sécurité.\n- Ton : brutal, viscéral, sans pitié. Max 4 phrases.\n\nRÈGLES DE DÉS — OBLIGATOIRE :\n- Le contexte fournit TOUJOURS ROLL:X=RÉSULTAT pour chaque action.\n- Narrer en cohérence STRICTE : CRITIQUE(80+)=exploit | SUCCÈS(51-79)=réussi | ÉCHEC(21-50)=raté | DÉSASTRE(≤20)=catastrophe\n- Ne jamais décrire un succès si le roll indique ÉCHEC, et vice-versa.\n- En combat : fournis TOUJOURS enemyName et enemyHp.\n- hpChange en combat : négatif si coups reçus.\n- xpGain : 10-30 XP par ennemi vaincu.\n\nRÈGLES DE SURVIE :\n- Repos/parler : faim 0, soif 0, temps +6h ou +10min\n- Explorer : faim -3, soif -3, temps +30min\n- Combat court : faim -4, soif -6, temps +10min\n- Combat long/fuite : faim -6, soif -9, temps +20min\n- Compétence rage : faim -5, soif -7, temps +10min\n- Manger : faim +25à+40 | Boire : soif +30à+50\n\nFORMAT JSON OBLIGATOIRE dans un bloc ```json``` AVANT le texte :\n{\n  \"roll\": <1-100 ou null>,\n  \"success\": <true/false/null>,\n  \"hpChange\": <nombre>,\n  \"staminaChange\": <nombre>,\n  \"rageChange\": <nombre>,\n  \"goldChange\": <nombre>,\n  \"xpGain\": <nombre>,\n  \"hungerChange\": <nombre OBLIGATOIRE>,\n  \"thirstChange\": <nombre OBLIGATOIRE>,\n  \"tempChange\": <variation C ou 0>,\n  \"timeChange\": <minutes OBLIGATOIRE min 5>,\n  \"event\": <combat|explore|dialogue|loot|rest|null>,\n  \"enemyHp\": <null ou 0-100>,\n  \"enemyName\": <null ou string>,\n  \"locationChange\": <null ou string>,\n  \"lootItem\": <null ou {name,type,icon,qty,weight}>\n}";
 // Référence statique (écrasée au début de partie)
-let SYSTEM_PROMPT = buildSystemPrompt("Bjorn","sauvage","default","") + SYSTEM_PROMPT_SUFFIX;
+// Ces variables sont initialisées ici mais GÉRÉES via useRef dans App
+// pour éviter les closures stales en React
+let SYSTEM_PROMPT = buildSystemPrompt("Bjorn","sauvage","default","","hard") + SYSTEM_PROMPT_SUFFIX;
+let ACTIVE_DIFF_GLOBAL = DIFFICULTIES[2]; // "hard" — écrasé par startGame/loadGame
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // HELPERS
@@ -339,27 +370,22 @@ function normalizeItem(item){
 function rollD100(){ return Math.floor(Math.random()*100)+1; }
 
 function calcCombatDamage(roll, forStat, currentEnemyHp){
-  // Dégâts de Bjorn sur l'ennemi
+  const dm = (ACTIVE_DIFF_GLOBAL || DIFFICULTIES[2]).dmgMult;
   let enemyDmg=0, playerDmg=0;
   const base = Math.max(1, Math.floor(forStat*0.6));
   if(roll>=80){
-    // CRITIQUE : frappe puissante, quasi pas de riposte
-    enemyDmg = base + Math.floor(Math.random()*8) + 8;
-    playerDmg = Math.floor(Math.random()*4);
+    enemyDmg  = base + Math.floor(Math.random()*8) + 8;
+    playerDmg = Math.floor(Math.random()*4 * dm);
   } else if(roll>=51){
-    // SUCCÈS : échange standard
-    enemyDmg = base + Math.floor(Math.random()*5);
-    playerDmg = Math.floor(3 + Math.random()*9);
+    enemyDmg  = base + Math.floor(Math.random()*5);
+    playerDmg = Math.floor((3 + Math.random()*9) * dm);
   } else if(roll>=21){
-    // ÉCHEC : Bjorn rate, l'ennemi contre-attaque
-    enemyDmg = 0;
-    playerDmg = Math.floor(7 + Math.random()*11);
+    enemyDmg  = 0;
+    playerDmg = Math.floor((7 + Math.random()*11) * dm);
   } else {
-    // DÉSASTRE : coup dévastateur reçu
-    enemyDmg = 0;
-    playerDmg = Math.floor(14 + Math.random()*14);
+    enemyDmg  = 0;
+    playerDmg = Math.floor((14 + Math.random()*14) * dm);
   }
-  // L'ennemi ne peut pas descendre sous 0
   const newEnemyHp = Math.max(0, currentEnemyHp - enemyDmg);
   return { enemyDmg, playerDmg: -playerDmg, newEnemyHp };
 }
@@ -390,7 +416,11 @@ function getSurvivalMalus(char){
   const wRatio = maxW > 0 ? totalW/maxW : 0;
   if(wRatio > 1.0){forMod-=4; agiMod-=7; staDrain+=7;}
   else if(wRatio > 0.85){agiMod-=3; staDrain+=3;}
-  return {forMod,agiMod,endMod,hpDrain,staDrain,totalW,maxW,wRatio};
+  const dm = (ACTIVE_DIFF_GLOBAL || DIFFICULTIES[2]).drainMult;
+  return {forMod,agiMod,endMod,
+    hpDrain:  Math.round(hpDrain  * dm),
+    staDrain: Math.round(staDrain * dm),
+    totalW, maxW, wRatio};
 }
 
 function getSurvivalStatus(char){
@@ -489,13 +519,17 @@ function App(){
   const [dead,setDead]=useState(false);
   const [unconscious,setUnconscious]=useState(false);
   // Chargen state
-  const [cg,setCg]=useState({
-    name:"Bjorn", originId:"sauvage", scenarioId:"default", customScenario:""
+  const [cg,setCg]=useState(()=>{
+    // Pré-sélectionner le premier slot vide, ou 0 par défaut
+    const freeIdx = SAVE_SLOTS.findIndex(k=>!localStorage.getItem(k));
+    return { name:"Bjorn", originId:"sauvage", scenarioId:"default", customScenario:"", saveSlot:freeIdx>=0?freeIdx:0, diffId:"hard" };
   });
   const endRef=useRef(null);
   const history=useRef([]);
   const inputRef=useRef(null);
   const soundMode=useRef("explore");
+  const activeDiffRef=useRef(DIFFICULTIES[2]);   // ref React pour ACTIVE_DIFF
+  const systemPromptRef=useRef(SYSTEM_PROMPT);   // ref React pour SYSTEM_PROMPT
 
   // ── SAUVEGARDE AUTO ──────────────────────────────────────────────────────────
   useEffect(()=>{
@@ -510,17 +544,23 @@ function App(){
   // ── DEATH / UNCONSCIOUS CHECK ───────────────────────────────────────────────
   useEffect(()=>{
     if(char.hp<=0&&!dead){
-      setDead(true); setUnconscious(false);
+      setDead(true); setUnconscious(false); setEnemy(null);
       if(soundOnRef.current) SE.play("dead",0);
-      setMessages(p=>[...p,{role:"assistant",text:"☠ BJORN EST MORT. La faim, la soif, le froid ou les coups ont eu raison de toi. Le donjon n'a aucune pitié. Recommence.",roll:null}]);
+      const isHardcore = activeDiffRef.current.id==="hardcore";
+      if(isHardcore){
+        deleteSlot(SAVE_SLOTS[activeSlot]);
+        setMessages(p=>[...p,{role:"assistant",text:"☠ MORT DÉFINITIVE — MODE HARDCORE. Ta save a été effacée. Recommence depuis zéro.",roll:null}]);
+      } else {
+        setMessages(p=>[...p,{role:"assistant",text:"☠ BJORN EST MORT. La faim, la soif, le froid ou les coups ont eu raison de toi. Le donjon n'a aucune pitié. Recommence.",roll:null}]);
+      }
     }
   },[char.hp]);
 
   useEffect(()=>{
-    if(char.unconscious && !unconscious){
+    if(char.unconscious && !unconscious && !dead){
       setUnconscious(true);
       // MORT si inconscient en combat solo
-      if(enemy && !dead){
+      if(enemy){
         setDead(true);
         setUnconscious(false);
         if(soundOnRef.current) SE.play("dead",0);
@@ -595,8 +635,20 @@ function App(){
     setDead(savedChar.hp<=0);
     setUnconscious(savedChar.unconscious||false);
     setEnemy(s.enemy||null);
+    // Restaurer la difficulté de la save
+    if(savedChar.difficulty){
+      const savedDiff = DIFFICULTIES.find(d=>d.id===savedChar.difficulty);
+      if(savedDiff){ ACTIVE_DIFF_GLOBAL=savedDiff; activeDiffRef.current=savedDiff; }
+    }
+    // Restaurer le prompt selon la difficulté et le perso chargé
+    const restoredPrompt = buildSystemPrompt(
+      savedChar.name||"Bjorn", savedChar.origin||"sauvage",
+      savedChar.scenario||"default", "", savedChar.difficulty||"hard"
+    ) + SYSTEM_PROMPT_SUFFIX;
+    SYSTEM_PROMPT = restoredPrompt;
+    systemPromptRef.current = restoredPrompt;
     setScreen("game");
-    showNotif("📂 Partie chargée","#44aaff");
+    showNotif("📂 Slot "+(slotIdx+1)+" — "+activeDiffRef.current.icon+" "+activeDiffRef.current.label,"#44aaff");
   };
 
   const deleteSave=(slotIdx)=>{
@@ -622,16 +674,22 @@ function App(){
     const scenario= SCENARIOS.find(s=>s.id===cg.scenarioId)||SCENARIOS[0];
     const scenarioPrompt = scenario.id==="custom" ? cg.customScenario : scenario.prompt;
     // Construire le perso de départ avec les bonus d'origine
+    const diff = DIFFICULTIES.find(d=>d.id===cg.diffId)||DIFFICULTIES[2];
+    ACTIVE_DIFF_GLOBAL = diff;    // variable globale pour fonctions hors composant
+    activeDiffRef.current = diff; // ref React pour fonctions dans composant
+    const sb = diff.statBonus;
+    const hb = Math.max(10, 80 + diff.hpBonus); // HP min 10
     const newChar={
       ...INITIAL_CHAR,
       name: cg.name||"Bjorn",
+      hp: hb, hpMax: hb,
       stats:{
-        FOR: INITIAL_CHAR.stats.FOR + (origin.bonus.FOR||0),
-        AGI: INITIAL_CHAR.stats.AGI + (origin.bonus.AGI||0),
-        END: INITIAL_CHAR.stats.END + (origin.bonus.END||0),
-        INT: INITIAL_CHAR.stats.INT + (origin.bonus.INT||0),
-        CHA: INITIAL_CHAR.stats.CHA + (origin.bonus.CHA||0),
-        PER: INITIAL_CHAR.stats.PER + (origin.bonus.PER||0),
+        FOR: Math.max(1, INITIAL_CHAR.stats.FOR + (origin.bonus.FOR||0) + sb),
+        AGI: Math.max(1, INITIAL_CHAR.stats.AGI + (origin.bonus.AGI||0) + sb),
+        END: Math.max(1, INITIAL_CHAR.stats.END + (origin.bonus.END||0) + sb),
+        INT: Math.max(1, INITIAL_CHAR.stats.INT + (origin.bonus.INT||0)),
+        CHA: Math.max(1, INITIAL_CHAR.stats.CHA + (origin.bonus.CHA||0)),
+        PER: Math.max(1, INITIAL_CHAR.stats.PER + (origin.bonus.PER||0)),
       },
       temp:      INITIAL_CHAR.temp      + (origin.bonus.temp||0),
       rageMax:   INITIAL_CHAR.rageMax   + (origin.bonus.rageMax||0),
@@ -640,12 +698,17 @@ function App(){
       hunger:    origin.bonus.hungerMax || INITIAL_CHAR.hunger,
       thirst:    origin.bonus.thirstMax || INITIAL_CHAR.thirst,
       inventory: (origin.startItems||[]).map(normalizeItem),
+      difficulty: diff.id,       // stocker la difficulté dans le perso
+      origin:     cg.originId,   // pour reconstruction du prompt au chargement
+      scenario:   cg.scenarioId, // pour reconstruction du prompt au chargement
     };
-    // Mettre à jour le prompt dynamique
-    SYSTEM_PROMPT = buildSystemPrompt(newChar.name, cg.originId, cg.scenarioId, scenarioPrompt) + SYSTEM_PROMPT_SUFFIX;
+    // Mettre à jour le prompt dynamique avec la difficulté
+    const newPrompt = buildSystemPrompt(newChar.name, cg.originId, cg.scenarioId, scenarioPrompt, diff.id) + SYSTEM_PROMPT_SUFFIX;
+    SYSTEM_PROMPT = newPrompt;
+    systemPromptRef.current = newPrompt;
     const initText = buildInitMsg(newChar.name, scenario, cg.customScenario);
     const initMsgs = [{role:"assistant", text:initText, roll:null}];
-    const idx = typeof slotIdx==="number" ? slotIdx : 0;
+    const idx = (typeof slotIdx==="number" && slotIdx>=0 && slotIdx<=2) ? slotIdx : 0;
     setActiveSlot(idx);
     setChar(newChar);
     setMessages(initMsgs);
@@ -667,8 +730,12 @@ function App(){
     if(d.goldChange) c.gold = Math.max(0,c.gold+d.goldChange);
 
     // SURVIE
-    const hungerCost = (d.hungerChange !== undefined && d.hungerChange !== null) ? d.hungerChange : 0;
-    const thirstCost = (d.thirstChange !== undefined && d.thirstChange !== null) ? d.thirstChange : 0;
+    // Survie : amplifier les pertes selon difficulté (pas les gains)
+    const rawH = (d.hungerChange !== undefined && d.hungerChange !== null) ? d.hungerChange : 0;
+    const rawT = (d.thirstChange !== undefined && d.thirstChange !== null) ? d.thirstChange : 0;
+    const drainScale = activeDiffRef.current.drainMult;
+    const hungerCost = rawH < 0 ? Math.round(rawH * drainScale) : rawH;
+    const thirstCost = rawT < 0 ? Math.round(rawT * drainScale) : rawT;
     const tempDelta  = d.tempChange   !== undefined ? d.tempChange  : 0;
     c.hunger = clamp(c.hunger + hungerCost, 0, c.hungerMax);
     c.thirst = clamp(c.thirst + thirstCost, 0, c.thirstMax);
@@ -695,7 +762,7 @@ function App(){
 
     // XP / Level up
     if(d.xpGain){
-      c.xp+=d.xpGain;
+      c.xp+=Math.round(d.xpGain * ACTIVE_DIFF_GLOBAL.xpMult);
       if(c.xp>=c.xpNext){
         c.level++; c.xp-=c.xpNext; c.xpNext=Math.floor(c.xpNext*1.6);
         c.hpMax+=10; c.hp=Math.min(c.hpMax,c.hp+10);
@@ -751,13 +818,13 @@ function App(){
       : ` | ${rollInfo}`;
 
     const weightStr = char.inventory.length>0 ? ` | Charge:${calcWeight(char.inventory).toFixed(1)}/${maxCarry(char.stats.FOR).toFixed(0)}kg` : "";
-    const ctx=`[${dateStr} | PV:${char.hp}/${char.hpMax} END:${char.stamina}/${char.staminaMax} RAGE:${char.rage}/${char.rageMax} Or:${char.gold}g Nv:${char.level}${char.unconscious?" | INCONSCIENT":""}${weightStr} | Lieu:${char.location} | Faim:${char.hunger}% Soif:${char.thirst}% Temp:${char.temp}°C | FOR:${char.stats.FOR+mal.forMod} AGI:${char.stats.AGI+mal.agiMod} | Inventaire:${inv}${combatCtx}]`;
+    const ctx=`[${dateStr} | DIFF:${activeDiffRef.current.label} | PV:${char.hp}/${char.hpMax} END:${char.stamina}/${char.staminaMax} RAGE:${char.rage}/${char.rageMax} Or:${char.gold}g Nv:${char.level}${char.unconscious?" | INCONSCIENT":""}${weightStr} | Lieu:${char.location} | Faim:${char.hunger}% Soif:${char.thirst}% Temp:${char.temp}°C | FOR:${char.stats.FOR+mal.forMod} AGI:${char.stats.AGI+mal.agiMod} | Inventaire:${inv}${combatCtx}]`;
 
     try{
       const res=await fetch("https://api.anthropic.com/v1/messages",{
         method:"POST",
         headers:{"Content-Type":"application/json","x-api-key":apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
-        body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:700,system:SYSTEM_PROMPT,
+        body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:700,system:systemPromptRef.current,
           messages:[...history.current.slice(-14),{role:"user",content:ctx+"\n\nAction: "+txt}]})
       });
       const data=await res.json();
@@ -786,9 +853,14 @@ function App(){
           setEnemy({name:eName, hp:newEHp});
         }
       } else {
-        // Hors combat — gestion normale de l'ennemi si Claude en crée un
+        // Hors combat — Claude peut créer un ennemi
         if(delta.event==="combat" && delta.enemyName && !enemy){
           setEnemy({name:delta.enemyName, hp:delta.enemyHp??100});
+        }
+        // Si on était en combat et que Claude retourne un événement non-combat
+        // avec enemyHp null → l'ennemi est considéré parti
+        else if(enemy && delta.enemyHp===null && delta.event && delta.event!=="combat"){
+          setEnemy(null);
         }
       }
 
@@ -873,7 +945,8 @@ function App(){
     });
     showNotif("💤 Bjorn reprend conscience...","#aaaaff");
     setMessages(prev=>[...prev,{role:"assistant",text:"Bjorn reprend lentement conscience, épuisé. Son corps refuse de le laisser mourir — pour l'instant. Il parvient à se relever, chancelant. Que fais-tu ?",roll:null}]);
-    if(soundOnRef.current) SE.play("explore",char.hp/char.hpMax);
+    // Utiliser char via closure — acceptable car wakeUp est appelé manuellement
+    if(soundOnRef.current) SE.play(char.hp/char.hpMax < 0.3 ? "danger" : "explore", char.hp/char.hpMax);
   };
 
   // ══ ÉCRAN CLÉ API ════════════════════════════════════════════════════════════
@@ -915,11 +988,13 @@ function App(){
                 <span style={{fontSize:9,color:"#5a3818"}}>{s.savedAt?new Date(s.savedAt).toLocaleDateString("fr-FR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}):""}</span>
               </div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:4,marginBottom:8}}>
-                {[
-                  {l:"Perso",v:(s.char?.name||"?")+` Nv.${s.char?.level||1}`},
-                  {l:"PV",   v:`${s.char?.hp||"?"}/${s.char?.hpMax||"?"}`},
-                  {l:"Or",   v:`${s.char?.gold||0}g`},
-                ].map((r,i)=>(
+                {(()=>{
+                  const diffInfo = DIFFICULTIES.find(d=>d.id===s.char?.difficulty)||DIFFICULTIES[2];
+                  return [{l:"Perso",v:(s.char?.name||"?")+` Nv.${s.char?.level||1}`},
+                    {l:"PV", v:`${s.char?.hp||"?"}/${s.char?.hpMax||"?"}`},
+                    {l:"Diff",v:diffInfo.icon+" "+diffInfo.label},
+                  ];
+                })().map((r,i)=>(
                   <div key={i} style={{background:"#120a02",borderRadius:6,padding:"4px 8px"}}>
                     <div style={{fontSize:8,color:"#5a3818"}}>{r.l}</div>
                     <div style={{fontSize:11,color:"#d4a870"}}>{r.v}</div>
@@ -1012,6 +1087,31 @@ function App(){
           )}
         </div>
 
+        {/* Difficulté */}
+        <div style={{width:"100%",maxWidth:380,marginBottom:14}}>
+          <div style={{fontSize:10,color:"#5a3818",fontFamily:"'Cinzel',serif",letterSpacing:2,marginBottom:8}}>▸ DIFFICULTÉ</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+            {DIFFICULTIES.map(d=>(
+              <div key={d.id} onClick={()=>setCg(p=>({...p,diffId:d.id}))}
+                style={{background:cg.diffId===d.id?"#1a0e04":"#0e0a02",
+                  border:"2px solid "+(cg.diffId===d.id?
+                    (d.id==="easy"?"#44aa44":d.id==="normal"?"#4488cc":d.id==="hard"?"#c8762a":d.id==="brutal"?"#cc4444":"#8844cc")
+                    :"#2a1808"),
+                  borderRadius:8,padding:"9px 10px",cursor:"pointer"}}>
+                <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:3}}>
+                  <span style={{fontSize:14}}>{d.icon}</span>
+                  <span style={{fontFamily:"'Cinzel',serif",fontSize:11,
+                    color:cg.diffId===d.id?
+                      (d.id==="easy"?"#66cc66":d.id==="normal"?"#6699dd":d.id==="hard"?"#e8a84a":d.id==="brutal"?"#ee6644":"#aa66dd")
+                      :"#7a5030"}}>{d.label}</span>
+                </div>
+                <div style={{fontSize:9,color:"#5a3818",lineHeight:1.4}}>{d.desc}</div>
+                {d.id==="hardcore"&&<div style={{fontSize:9,color:"#aa4488",marginTop:3,fontFamily:"'Cinzel',serif"}}>⚠ Save effacée à la mort</div>}
+              </div>
+            ))}
+          </div>
+        </div>
+
         {/* Slot de sauvegarde */}
         <div style={{width:"100%",maxWidth:380,marginBottom:20}}>
           <div style={{fontSize:10,color:"#5a3818",fontFamily:"'Cinzel',serif",letterSpacing:2,marginBottom:8}}>▸ SLOT DE SAUVEGARDE</div>
@@ -1035,7 +1135,7 @@ function App(){
 
         {/* Boutons */}
         <div style={{width:"100%",maxWidth:380,display:"flex",flexDirection:"column",gap:8}}>
-          <button onClick={()=>{ const slot=cg.saveSlot!==undefined?cg.saveSlot:(listSaves().findIndex(s=>!s)>=0?listSaves().findIndex(s=>!s):0); startGame(slot); }}
+          <button onClick={()=>{ const slot=(cg.saveSlot!==undefined&&cg.saveSlot>=0)?cg.saveSlot:0; startGame(slot); }}
             disabled={!cg.name?.trim()}
             style={{background:cg.name?.trim()?"linear-gradient(135deg,#8a4a10,#c8762a)":"#1a0e04",border:"1px solid #c8762a",borderRadius:10,color:"#ffd4a0",padding:"13px",cursor:cg.name?.trim()?"pointer":"not-allowed",fontFamily:"'Cinzel',serif",fontSize:14,letterSpacing:2}}>
             ⚔ COMMENCER L'AVENTURE
@@ -1071,6 +1171,7 @@ function App(){
         <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:5}}>
           <span style={{fontFamily:"'Cinzel',serif",fontSize:14,color:"#e8a84a"}}>{char.name}</span>
           <span style={{background:"#2a1608",border:"1px solid #c8862a",color:"#c8862a",borderRadius:4,padding:"0 6px",fontSize:9,fontFamily:"'Cinzel',serif"}}>Nv.{char.level}</span>
+          <span style={{fontSize:11}} title={activeDiffRef.current.label}>{activeDiffRef.current.icon}</span>
           {enemy&&<span style={{background:"#2a0404",border:"1px solid #cc3333",color:"#ee4444",borderRadius:4,padding:"0 6px",fontSize:9,fontFamily:"'Cinzel',serif"}}>⚔ COMBAT</span>}
           {char.unconscious&&<span style={{background:"#0a0a2a",border:"1px solid #aaaaff",color:"#aaaaff",borderRadius:4,padding:"0 6px",fontSize:9,fontFamily:"'Cinzel',serif",animation:"pulse 1s infinite"}}>💤 INCONSCIENT</span>}
           <span style={{marginLeft:"auto",fontSize:10,color:"#7a6030",fontFamily:"'Cinzel',serif"}}>J{char.day} M{char.month} | {String(char.hour).padStart(2,"0")}h</span>
