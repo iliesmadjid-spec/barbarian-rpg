@@ -333,7 +333,29 @@ function buildSystemPrompt(charName, originId, scenarioId, scenarioPrompt, diffI
     +"DIFFICULTÉ : "+diff.label.toUpperCase()+" — "+diff.promptHint;
 }
 
-const SYSTEM_PROMPT_SUFFIX = "\n\nRÈGLES FONDAMENTALES :\n- Le jeu est TRÈS DIFFICILE. Économie brutale : objets rares, chers.\n- Le personnage n'a RIEN au départ sauf équipement d'origine. Tout doit être gagné.\n- Eau rare. Nourriture encore plus rare. Jamais gratuit.\n- Température : niveaux profonds glaciaux, certaines zones brûlantes.\n- Les PNJs sont méfiants. Pas de filet de sécurité.\n- Ton : brutal, viscéral, sans pitié. Max 4 phrases.\n\nRÈGLES DE DÉS — OBLIGATOIRE :\n- Le contexte fournit TOUJOURS ROLL:X=RÉSULTAT pour chaque action.\n- Le ROLL dans le contexte EST le résultat officiel. Tu DOIS narrer en conséquence STRICTE.\n- CRITIQUE(80+)=exploit | SUCCÈS(51-79)=réussi | ÉCHEC(21-50)=raté | DÉSASTRE(≤20)=catastrophe\n- INTERDIT de narrer un succès si ROLL indique ÉCHEC ou DÉSASTRE. INTERDIT de narrer un échec si ROLL indique SUCCÈS ou CRITIQUE.\n- Ne génère PAS de champ roll ni success dans le JSON — ils sont gérés automatiquement.\n- En combat : fournis TOUJOURS enemyName et enemyHp.\n- hpChange en combat : négatif si coups reçus.\n- xpGain : 10-30 XP par ennemi vaincu.\n\nRÈGLES DE SURVIE :\n- Repos/parler : faim 0, soif 0, temps +6h ou +10min\n- Explorer : faim -3, soif -3, temps +30min\n- Combat court : faim -4, soif -6, temps +10min\n- Combat long/fuite : faim -6, soif -9, temps +20min\n- Compétence rage : faim -5, soif -7, temps +10min\n- Manger : faim +25à+40 | Boire : soif +30à+50\n\nFORMAT JSON OBLIGATOIRE dans un bloc ```json``` AVANT le texte :\n{\n  // roll et success sont calculés côté client, ne pas les fournir\n  \"hpChange\": <nombre>,\n  \"staminaChange\": <nombre>,\n  \"rageChange\": <nombre>,\n  \"goldChange\": <nombre>,\n  \"xpGain\": <nombre>,\n  \"hungerChange\": <nombre OBLIGATOIRE>,\n  \"thirstChange\": <nombre OBLIGATOIRE>,\n  \"tempChange\": <variation C ou 0>,\n  \"timeChange\": <minutes OBLIGATOIRE min 5>,\n  \"event\": <combat|explore|dialogue|loot|rest|null>,\n  \"enemyHp\": <null ou 0-100>,\n  \"enemyName\": <null ou string>,\n  \"locationChange\": <null ou string>,\n  \"lootItem\": <null ou {name,type,icon,qty,weight}>\n}";
+function buildPromptSuffix(diffId){
+  const d = DIFFICULTIES.find(x=>x.id===diffId)||DIFFICULTIES[2];
+  const isEasy   = diffId==="easy";
+  const isNormal = diffId==="normal";
+  const isBrutal = diffId==="brutal"||diffId==="hardcore";
+  const econRules = isEasy
+    ? "Nourriture et eau FACILEMENT disponibles. PNJs globalement coopératifs. Mort rare."
+    : isNormal
+    ? "Ressources rares mais trouvables. PNJs méfiants mais négociables."
+    : isBrutal
+    ? "Ressources quasi inexistantes. Chaque ressource demande un sacrifice. PNJs hostiles."
+    : "Ressources rares. Économie brutale. PNJs méfiants.";
+  const survivalRules = isEasy
+    ? "- Repos/parler : faim 0, soif 0\n- Explorer : faim -1, soif -1, temps +30min\n- Combat : faim -2, soif -3, temps +10min\n- Manger : faim +40a+60 | Boire : soif +50a+70\n- La nourriture et eau se trouvent facilement. Bjorn ne doit pas mourir de faim en explorant."
+    : isNormal
+    ? "- Repos/parler : faim 0, soif 0\n- Explorer : faim -2, soif -2, temps +30min\n- Combat court : faim -3, soif -4, temps +10min\n- Combat long : faim -4, soif -6, temps +20min\n- Manger : faim +30a+45 | Boire : soif +35a+55"
+    : isBrutal
+    ? "- Repos/parler : faim 0, soif 0\n- Explorer : faim -5, soif -5, temps +30min\n- Combat court : faim -6, soif -9, temps +10min\n- Combat long : faim -9, soif -13, temps +20min\n- Manger : faim +20a+30 | Boire : soif +25a+40\n- Ressources extremement rares."
+    : "- Repos/parler : faim 0, soif 0\n- Explorer : faim -3, soif -3, temps +30min\n- Combat court : faim -4, soif -6, temps +10min\n- Combat long/fuite : faim -6, soif -9, temps +20min\n- Manger : faim +25a+40 | Boire : soif +30a+50";
+  const xpRule = isEasy?"15-40":isNormal?"12-35":"10-30";
+  return "\n\nREGLES FONDAMENTALES :\n- "+econRules+"\n- Temperature : niveaux profonds glaciaux, certaines zones brulantes.\n- Ton : immersif, visceral. Max 4 phrases.\n\nREGLES DE DES - OBLIGATOIRE :\n- Le contexte fournit TOUJOURS ROLL:X=RESULTAT pour chaque action.\n- CRITIQUE(80+)=exploit | SUCCES(51-79)=reussi | ECHEC(21-50)=rate | DESASTRE(<=20)=catastrophe\n- INTERDIT de narrer succes si ROLL=ECHEC/DESASTRE et vice-versa.\n- Ne genere PAS de champ roll ni success dans le JSON.\n- En combat : fournis TOUJOURS enemyName et enemyHp.\n- hpChange en combat : negatif si coups recus.\n- xpGain : "+xpRule+" XP par ennemi vaincu.\n\nREGLES DE SURVIE :\n"+survivalRules+"\n\nFORMAT JSON OBLIGATOIRE dans un bloc ```json``` AVANT le texte :\n{\n  \"hpChange\": <nombre>,\n  \"staminaChange\": <nombre>,\n  \"rageChange\": <nombre>,\n  \"goldChange\": <nombre>,\n  \"xpGain\": <nombre>,\n  \"hungerChange\": <nombre OBLIGATOIRE>,\n  \"thirstChange\": <nombre OBLIGATOIRE>,\n  \"tempChange\": <variation C ou 0>,\n  \"timeChange\": <minutes OBLIGATOIRE min 5>,\n  \"event\": <combat|explore|dialogue|loot|rest|null>,\n  \"enemyHp\": <null ou 0-100>,\n  \"enemyName\": <null ou string>,\n  \"locationChange\": <null ou string>,\n  \"lootItem\": <null ou {name,type,icon,qty,weight}>\n}";
+}
+const SYSTEM_PROMPT_SUFFIX = buildPromptSuffix("hard");
 // Référence statique (écrasée au début de partie)
 // Ces variables sont initialisées ici mais GÉRÉES via useRef dans App
 // pour éviter les closures stales en React
@@ -644,7 +666,7 @@ function App(){
     const restoredPrompt = buildSystemPrompt(
       savedChar.name||"Bjorn", savedChar.origin||"sauvage",
       savedChar.scenario||"default", "", savedChar.difficulty||"hard"
-    ) + SYSTEM_PROMPT_SUFFIX;
+    ) + buildPromptSuffix(savedChar.difficulty||"hard");
     SYSTEM_PROMPT = restoredPrompt;
     systemPromptRef.current = restoredPrompt;
     setScreen("game");
@@ -691,19 +713,33 @@ function App(){
         CHA: Math.max(1, INITIAL_CHAR.stats.CHA + (origin.bonus.CHA||0)),
         PER: Math.max(1, INITIAL_CHAR.stats.PER + (origin.bonus.PER||0)),
       },
-      temp:      INITIAL_CHAR.temp      + (origin.bonus.temp||0),
+      temp: (()=>{
+        const base = INITIAL_CHAR.temp + (origin.bonus.temp||0);
+        // En facile, donjon moins froid au départ
+        return diff.id==="easy" ? base+8 : diff.id==="normal" ? base+3 : base;
+      })(),
       rageMax:   INITIAL_CHAR.rageMax   + (origin.bonus.rageMax||0),
       hungerMax: origin.bonus.hungerMax || INITIAL_CHAR.hungerMax,
       thirstMax: origin.bonus.thirstMax || INITIAL_CHAR.thirstMax,
       hunger:    origin.bonus.hungerMax || INITIAL_CHAR.hunger,
       thirst:    origin.bonus.thirstMax || INITIAL_CHAR.thirst,
-      inventory: (origin.startItems||[]).map(normalizeItem),
+      inventory: (()=>{
+        const base = (origin.startItems||[]).map(normalizeItem);
+        if(diff.id==="easy"){
+          // En facile: on commence avec de la nourriture et de l'eau
+          base.push({name:"Ration de voyage",type:"food",icon:"🍞",qty:3,weight:0.3});
+          base.push({name:"Outre d'eau",type:"water",icon:"💧",qty:2,weight:0.5});
+        } else if(diff.id==="normal"){
+          base.push({name:"Pain rassis",type:"food",icon:"🍞",qty:1,weight:0.3});
+        }
+        return base;
+      })(),
       difficulty: diff.id,       // stocker la difficulté dans le perso
       origin:     cg.originId,   // pour reconstruction du prompt au chargement
       scenario:   cg.scenarioId, // pour reconstruction du prompt au chargement
     };
     // Mettre à jour le prompt dynamique avec la difficulté
-    const newPrompt = buildSystemPrompt(newChar.name, cg.originId, cg.scenarioId, scenarioPrompt, diff.id) + SYSTEM_PROMPT_SUFFIX;
+    const newPrompt = buildSystemPrompt(newChar.name, cg.originId, cg.scenarioId, scenarioPrompt, diff.id) + buildPromptSuffix(diff.id);
     SYSTEM_PROMPT = newPrompt;
     systemPromptRef.current = newPrompt;
     const initText = buildInitMsg(newChar.name, scenario, cg.customScenario);
@@ -748,7 +784,9 @@ function App(){
 
     // Loot — guard qty>0 + normalisation complète des champs + weight
     if(d.lootItem && d.lootItem.name){
-      const lootQty  = Math.max(1, parseInt(d.lootItem.qty)||1);
+      // lootMult booste les quantités en facile, réduit en brutal
+      const baseLootQty = Math.max(1, parseInt(d.lootItem.qty)||1);
+      const lootQty = Math.max(1, Math.round(baseLootQty * (ACTIVE_DIFF_GLOBAL||DIFFICULTIES[2]).lootMult));
       const lootType = d.lootItem.type||"misc";
       const lootW    = typeof d.lootItem.weight==="number" && d.lootItem.weight>0
                          ? d.lootItem.weight
